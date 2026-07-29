@@ -5,6 +5,8 @@ import type {
   PaperDetail,
   PaperSearchResult,
   PaperSummaryResponse,
+  ResearchBrief,
+  ResearchProject,
   UploadPaperResponse,
 } from "../types";
 
@@ -68,4 +70,50 @@ export async function sendChatMessage(
 
 export function getPdfUrl(paperId: string): string {
   return `${apiBaseUrl}/papers/${paperId}/file`;
+}
+
+export async function createResearchProject(question: string): Promise<ResearchProject> {
+  return request<ResearchProject>("/research-projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+}
+
+export async function createDemoProject(): Promise<ResearchProject> {
+  return request<ResearchProject>("/research-projects/demo", { method: "POST" });
+}
+
+export async function listResearchProjects(): Promise<ResearchProject[]> {
+  return request<ResearchProject[]>("/research-projects");
+}
+
+export async function getResearchProject(projectId: string): Promise<ResearchProject> {
+  return request<ResearchProject>(`/research-projects/${projectId}`);
+}
+
+export async function planResearchProject(projectId: string): Promise<{ search_queries: string[]; inclusion_criteria: string[] }> {
+  return request<{ search_queries: string[]; inclusion_criteria: string[] }>(`/research-projects/${projectId}/plan`, {
+    method: "POST",
+  });
+}
+
+export async function discoverResearchCandidates(projectId: string): Promise<ResearchProject> {
+  return request<ResearchProject>(`/research-projects/${projectId}/discover`, { method: "POST" });
+}
+
+export async function importSelectedCandidates(projectId: string, candidateIds: string[]): Promise<ResearchProject> {
+  return request<ResearchProject>(`/research-projects/${projectId}/import-selected`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ candidate_ids: candidateIds }),
+  });
+}
+
+export async function synthesizeResearchProject(projectId: string): Promise<ResearchProject> {
+  return request<ResearchProject>(`/research-projects/${projectId}/synthesize`, { method: "POST" });
+}
+
+export async function getResearchBrief(projectId: string): Promise<ResearchBrief> {
+  return request<ResearchBrief>(`/research-projects/${projectId}/brief`);
 }

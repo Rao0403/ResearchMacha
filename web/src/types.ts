@@ -100,3 +100,46 @@ export interface ChatResponse {
   retrieved_chunk_ids: string[];
 }
 
+export interface ResearchCandidate {
+  id: string;
+  project_id: string;
+  arxiv_id: string;
+  title: string;
+  authors: string[];
+  abstract: string;
+  year?: number | null;
+  pdf_url: string;
+  entry_url: string;
+  score: number;
+  rationale: string;
+  selected: boolean;
+  created_at: string;
+}
+
+export interface ResearchFinding {
+  label: string;
+  summary: string;
+  citations: Array<Citation & { paper_id?: string | null; title?: string | null }>;
+}
+
+export interface ResearchBrief {
+  executive_summary: string;
+  key_findings: ResearchFinding[];
+  evidence_table: ResearchFinding[];
+  conflicts_or_gaps: ResearchFinding[];
+  suggested_experiments: ResearchFinding[];
+  suggested_research_directions: ResearchFinding[];
+}
+
+export interface ResearchProject {
+  id: string;
+  question: string;
+  status: string;
+  generated_queries: string[];
+  inclusion_criteria: string[];
+  synthesis_json?: ResearchBrief | null;
+  created_at: string;
+  updated_at: string;
+  candidates: ResearchCandidate[];
+  papers: LibraryPaper[];
+}
