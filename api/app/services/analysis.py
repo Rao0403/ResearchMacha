@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models.paper import ChatMessage, ChatSession, Highlight, Job, Paper, PaperChunk, PaperSummary
 from app.schemas.paper import ChatMessageRead, ChatResponse
-from app.services.ai import get_ai_provider
+from app.ai import get_ai_provider
 from app.services.pdf import chunk_pages, extract_pdf_pages
 from app.services.retrieval import top_k_chunks
 
@@ -175,4 +175,3 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
 
 def now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
-

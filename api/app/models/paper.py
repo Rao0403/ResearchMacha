@@ -38,6 +38,7 @@ class Paper(Base):
     highlights: Mapped[list["Highlight"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
     chat_sessions: Mapped[list["ChatSession"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
     jobs: Mapped[list["Job"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
+    project_links: Mapped[list["ResearchProjectPaper"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
 
 
 class Job(Base):
@@ -130,3 +131,51 @@ class ChatMessage(Base):
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
 
+
+class ResearchProject(Base):
+    __tablename__ = "research_projects"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
+    question: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    generated_queries: Mapped[list[str]] = mapped_column(JSON, default=list)
+    inclusion_criteria: Mapped[list[str]] = mapped_column(JSON, default=list)
+    synthesis_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+    candidates: Mapped[list["ResearchCandidate"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    papers: Mapped[list["ResearchProjectPaper"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+
+
+class ResearchCandidate(Base):
+    __tablename__ = "research_candidates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), index=True)
+    arxiv_id: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(512))
+    authors: Mapped[list[str]] = mapped_column(JSON, default=list)
+    abstract: Mapped[str] = mapped_column(Text)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pdf_url: Mapped[str] = mapped_column(String(1024))
+    entry_url: Mapped[str] = mapped_column(String(1024))
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    rationale: Mapped[str] = mapped_column(Text)
+    selected: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    project: Mapped[ResearchProject] = relationship(back_populates="candidates")
+
+
+class ResearchProjectPaper(Base):
+    __tablename__ = "research_project_papers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), index=True)
+    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(64), default="evidence")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    project: Mapped[ResearchProject] = relationship(back_populates="papers")
+    paper: Mapped[Paper] = relationship(back_populates="project_links")

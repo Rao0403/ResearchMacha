@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
     ollama_base_url: str = "http://localhost:11434"
-    ollama_chat_model: str = "llama3.1"
+    ollama_chat_model: str = "llama3.2:1b"
     ollama_embed_model: str = "nomic-embed-text"
 
     model_config = SettingsConfigDict(
@@ -57,4 +57,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
