@@ -104,6 +104,31 @@ class UploadPaperResponse(BaseModel):
     job: JobRead
 
 
+class BatchUploadResponse(BaseModel):
+    items: list[UploadPaperResponse]
+
+
+class BatchSummaryRequest(BaseModel):
+    paper_ids: list[str] = Field(min_length=1)
+    goal: str = Field(default="Summarize the uploaded research papers.", min_length=3, max_length=2000)
+
+
+class BatchPaperSummaryRead(BaseModel):
+    paper_id: str
+    title: str
+    main_idea: str
+    problem_or_hypothesis: str
+    experiments: str
+    models_and_datasets: str
+    results: str
+    conclusions: str
+
+
+class BatchSummaryResponse(BaseModel):
+    overall_takeaway: str
+    papers: list[BatchPaperSummaryRead]
+
+
 class ArxivImportRequest(BaseModel):
     arxiv_id: str = Field(min_length=3, max_length=64)
 

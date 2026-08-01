@@ -72,3 +72,39 @@ def test_cited_brief_passes_validation() -> None:
 
 def test_arxiv_api_uses_https() -> None:
     assert ARXIV_API.startswith("https://")
+
+
+def test_mock_candidate_selection_uses_top_ranked_papers() -> None:
+    candidates = [
+        {"arxiv_id": "low", "score": 20, "rationale": "Weak match"},
+        {"arxiv_id": "high", "score": 95, "rationale": "Strong match"},
+        {"arxiv_id": "mid", "score": 60, "rationale": "Useful background"},
+        {"arxiv_id": "extra", "score": 50, "rationale": "Secondary"},
+    ]
+
+    selection = MockProvider().select_relevant_candidates("retrieval grounded QA", candidates)
+
+    assert [choice.arxiv_id for choice in selection.selected] == ["high", "mid", "extra"]
+    assert selection.selected[0].rationale == "Strong match"
+
+
+def test_mock_batch_summary_contains_required_fields() -> None:
+    summary = MockProvider().summarize_batch(
+        "Compare approaches",
+        [
+            {
+                "paper_id": "paper-1",
+                "title": "Grounded Reading Systems",
+                "summary": "The paper studies retrieval grounded paper reading with benchmark evaluations.",
+                "chunks": [],
+            }
+        ],
+    )
+
+    assert summary.overall_takeaway
+    assert summary.papers[0].main_idea
+    assert summary.papers[0].problem_or_hypothesis
+    assert summary.papers[0].experiments
+    assert summary.papers[0].models_and_datasets
+    assert summary.papers[0].results
+    assert summary.papers[0].conclusions

@@ -36,6 +36,15 @@ class ResearchPlan(BaseModel):
     inclusion_criteria: list[str] = Field(min_length=1, max_length=6)
 
 
+class CandidateChoice(BaseModel):
+    arxiv_id: str
+    rationale: str
+
+
+class CandidateSelection(BaseModel):
+    selected: list[CandidateChoice] = Field(default_factory=list)
+
+
 class PaperFinding(BaseModel):
     label: str
     summary: str
@@ -49,6 +58,22 @@ class ResearchBrief(BaseModel):
     conflicts_or_gaps: list[PaperFinding]
     suggested_experiments: list[PaperFinding]
     suggested_research_directions: list[PaperFinding]
+
+
+class BatchPaperSummary(BaseModel):
+    paper_id: str
+    title: str
+    main_idea: str
+    problem_or_hypothesis: str
+    experiments: str
+    models_and_datasets: str
+    results: str
+    conclusions: str
+
+
+class BatchSummary(BaseModel):
+    overall_takeaway: str
+    papers: list[BatchPaperSummary]
 
 
 @dataclass
@@ -71,10 +96,16 @@ class AIProvider:
     def plan_research(self, question: str) -> ResearchPlan:
         raise NotImplementedError
 
+    def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
+        raise NotImplementedError
+
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
         raise NotImplementedError
 
     def synthesize_collection(self, question: str, paper_contexts: list[dict[str, Any]]) -> ResearchBrief:
+        raise NotImplementedError
+
+    def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
         raise NotImplementedError
 
     def answer_question(
@@ -104,6 +135,18 @@ class MockProvider(AIProvider):
                 "Paper includes methods, experiments, or evaluations.",
                 "Paper provides evidence useful for comparing approaches.",
             ],
+        )
+
+    def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
+        ranked = sorted(candidates, key=lambda candidate: candidate.get("score", 0), reverse=True)[:3]
+        return CandidateSelection(
+            selected=[
+                CandidateChoice(
+                    arxiv_id=candidate["arxiv_id"],
+                    rationale=candidate.get("rationale") or "Selected as one of the highest-ranked candidates.",
+                )
+                for candidate in ranked
+            ]
         )
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
@@ -186,6 +229,27 @@ class MockProvider(AIProvider):
             ],
         )
 
+    def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
+        papers = []
+        for context in paper_contexts:
+            summary = context.get("summary") or "No summary is available yet."
+            papers.append(
+                BatchPaperSummary(
+                    paper_id=context["paper_id"],
+                    title=context["title"],
+                    main_idea=summary[:420],
+                    problem_or_hypothesis=summary[:420],
+                    experiments=summary[:420],
+                    models_and_datasets="Review the paper notes for model, dataset, or benchmark mentions.",
+                    results=summary[:420],
+                    conclusions=summary[:420],
+                )
+            )
+        return BatchSummary(
+            overall_takeaway=f"Summarized {len(papers)} papers for: {goal}",
+            papers=papers,
+        )
+
     def answer_question(
         self,
         paper_title: str,
@@ -237,6 +301,19 @@ class LangChainProvider(MockProvider):
         chain = prompt | self.chat_model.with_structured_output(ResearchPlan)
         return chain.invoke({"question": question})
 
+    def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "Select the most relevant arXiv papers for the research question. Choose 3 to 5 papers. Return arxiv_id and rationale.",
+                ),
+                ("human", "Question: {question}\nCandidates:\n{candidates}"),
+            ]
+        )
+        chain = prompt | self.chat_model.with_structured_output(CandidateSelection)
+        return chain.invoke({"question": question, "candidates": format_candidates(candidates)})
+
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -267,6 +344,19 @@ class LangChainProvider(MockProvider):
         )
         chain = prompt | self.chat_model.with_structured_output(ResearchBrief)
         return chain.invoke({"question": question, "context": format_paper_contexts(paper_contexts)})
+
+    def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "Summarize a batch of research papers into a comparison table. Use only supplied evidence.",
+                ),
+                ("human", "Goal: {goal}\nPaper evidence:\n{context}"),
+            ]
+        )
+        chain = prompt | self.chat_model.with_structured_output(BatchSummary)
+        return chain.invoke({"goal": goal, "context": format_paper_contexts(paper_contexts)})
 
     def answer_question(
         self,
@@ -349,6 +439,20 @@ def first_context_citation(context: dict[str, Any]) -> EvidenceCitation:
 def format_chunks(chunks: list[dict[str, Any]]) -> str:
     return "\n\n".join(
         f"[chunk_id={chunk['id']} page={chunk['page_start']}] {chunk['text'][:1200]}" for chunk in chunks
+    )
+
+
+def format_candidates(candidates: list[dict[str, Any]]) -> str:
+    return "\n\n".join(
+        (
+            f"arxiv_id={candidate['arxiv_id']}\n"
+            f"title={candidate['title']}\n"
+            f"year={candidate.get('year')}\n"
+            f"score={candidate.get('score')}\n"
+            f"rationale={candidate.get('rationale')}\n"
+            f"abstract={candidate.get('abstract', '')[:900]}"
+        )
+        for candidate in candidates[:12]
     )
 
 

@@ -11,6 +11,9 @@ from app.api.deps import get_db
 from app.models.paper import Highlight, Job, Paper, PaperSummary
 from app.schemas.paper import (
     ArxivImportRequest,
+    BatchSummaryRequest,
+    BatchSummaryResponse,
+    BatchUploadResponse,
     ChatRequest,
     ChatResponse,
     HighlightRead,
@@ -29,6 +32,7 @@ from app.services.papers import (
     create_uploaded_paper,
     get_paper_or_404,
 )
+from app.services.research import summarize_batch_papers
 from app.services.storage import save_upload_file
 
 router = APIRouter()
@@ -70,6 +74,32 @@ def upload_paper(
     paper = create_uploaded_paper(db, title=title or Path(file.filename or "uploaded-paper").stem, authors=author_list, pdf_path=stored_path)
     job = enqueue_analysis_job(db, paper.id, background_tasks, auto_reset=True)
     return UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job)
+
+
+@router.post("/papers/batch-upload", response_model=BatchUploadResponse)
+def batch_upload_papers(
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+) -> BatchUploadResponse:
+    if not files:
+        raise HTTPException(status_code=400, detail="Upload at least one PDF")
+
+    items: list[UploadPaperResponse] = []
+    for file in files:
+        if file.content_type not in {"application/pdf", "application/octet-stream"}:
+            raise HTTPException(status_code=400, detail=f"Only PDF uploads are supported: {file.filename}")
+        stored_path = save_upload_file(file)
+        paper = create_uploaded_paper(db, title=Path(file.filename or "uploaded-paper").stem, authors=[], pdf_path=stored_path)
+        job = enqueue_analysis_job(db, paper.id, background_tasks, auto_reset=True)
+        items.append(UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job))
+
+    return BatchUploadResponse(items=items)
+
+
+@router.post("/papers/batch-summary", response_model=BatchSummaryResponse)
+def summarize_paper_batch(payload: BatchSummaryRequest, db: Session = Depends(get_db)) -> BatchSummaryResponse:
+    return BatchSummaryResponse.model_validate(summarize_batch_papers(db, payload.paper_ids, payload.goal).model_dump())
 
 
 @router.get("/papers", response_model=list[LibraryPaperRead])
