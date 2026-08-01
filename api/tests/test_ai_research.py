@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.ai import EvidenceCitation, MockProvider, PaperFinding, ResearchBrief
-from app.services.arxiv import ArxivEntry
+from app.services.arxiv import ARXIV_API, ArxivEntry
 from app.services.research import ensure_cited_brief, score_candidate
 
 
@@ -68,3 +68,7 @@ def test_cited_brief_passes_validation() -> None:
     )
 
     ensure_cited_brief(brief)
+
+
+def test_arxiv_api_uses_https() -> None:
+    assert ARXIV_API.startswith("https://")

@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 import httpx
 
 ARXIV_NS = {"atom": "http://www.w3.org/2005/Atom"}
-ARXIV_API = "http://export.arxiv.org/api/query"
+ARXIV_API = "https://export.arxiv.org/api/query"
 
 
 @dataclass
@@ -26,13 +26,14 @@ def search_arxiv(query: str, max_results: int = 12) -> list[ArxivEntry]:
         ARXIV_API,
         params={"search_query": f"all:{query}", "start": 0, "max_results": max_results},
         timeout=30,
+        follow_redirects=True,
     )
     response.raise_for_status()
     return parse_feed(response.text)
 
 
 def fetch_arxiv_entry(arxiv_id: str) -> ArxivEntry:
-    response = httpx.get(ARXIV_API, params={"id_list": arxiv_id}, timeout=30)
+    response = httpx.get(ARXIV_API, params={"id_list": arxiv_id}, timeout=30, follow_redirects=True)
     response.raise_for_status()
     entries = parse_feed(response.text)
     if not entries:
@@ -69,4 +70,3 @@ def parse_feed(xml_text: str) -> list[ArxivEntry]:
 
 def normalize_whitespace(value: str) -> str:
     return " ".join(value.split())
-
