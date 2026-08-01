@@ -67,15 +67,28 @@ http://localhost:5173
 
 ## Demo Script
 
-1. Click `Load demo`.
-2. Open the created project.
-3. Review generated queries and inclusion criteria.
-4. Run `Search arXiv` if candidates are not already present.
-5. Select 3 candidates and click `Import selected`.
-6. Wait for paper analysis status to become `ready`.
-7. Click `Generate brief`.
-8. Inspect cited findings, gaps, suggested experiments, and directions.
-9. Open one paper from the collection and inspect highlights/chat.
+### Research Workflow
+
+1. Open `Research`.
+2. Type a research question and press Enter or click `Start`.
+3. Review the recommended arXiv papers selected by the LLM/ranking layer.
+4. Optionally unselect weak matches, then click `Approve selected papers`.
+5. Wait while the backend imports PDFs, analyzes each paper, and synthesizes the final brief.
+6. Inspect cited findings, gaps, suggested experiments, and research directions.
+
+### Paper Reader
+
+1. Open `Reader`.
+2. Upload a born-digital PDF, or paste an existing paper id.
+3. Wait for analysis if the paper is new.
+4. Inspect `Notes`, `Highlights`, and ask one grounded question in `Chat`.
+
+### Batch Summary
+
+1. Open `Batch Summary`.
+2. Upload one or more PDFs.
+3. Wait for each paper status to become `ready`.
+4. Inspect the overall takeaway and comparison table.
 
 ## Troubleshooting
 
@@ -83,3 +96,4 @@ http://localhost:5173
 - If embeddings fail because `nomic-embed-text` is not available, the backend falls back to deterministic embeddings for the MVP.
 - If arXiv import fails, check network access and retry with fewer selected papers.
 - If MySQL migration fails, verify `.env` and that the database exists.
+- If a summary endpoint returns `No analyzed paper evidence`, wait for the paper statuses to become `ready`.

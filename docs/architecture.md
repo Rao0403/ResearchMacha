@@ -2,7 +2,7 @@
 
 ## Goal
 
-ResearchMacha is an agentic RAG research workbench. The core demo starts with a research question and produces a cited research brief from arXiv papers.
+ResearchMacha is an agentic RAG research workbench. The showcase demo has three focused workflows: autonomous research-question discovery, a single-paper reader, and multi-PDF batch summarization.
 
 ## Stack
 
@@ -18,9 +18,10 @@ ResearchMacha is an agentic RAG research workbench. The core demo starts with a 
 
 1. Planner: LangChain turns a research question into arXiv search queries and inclusion criteria.
 2. Finder: the backend searches arXiv and ranks candidates with a transparent relevance score.
-3. Reader: selected PDFs are imported, parsed, chunked, embedded, summarized, and highlighted.
-4. Synthesizer: LangChain reads available paper evidence and produces a cited brief.
-5. Direction generator: the same synthesis output includes gaps, suggested experiments, and future research directions.
+3. Selector: LangChain chooses the most relevant candidate papers for user approval, with a deterministic top-3 fallback.
+4. Reader: approved or uploaded PDFs are imported, parsed, chunked, embedded, summarized, and highlighted.
+5. Synthesizer: LangChain reads available paper evidence and produces a cited brief.
+6. Direction generator: the same synthesis output includes gaps, suggested experiments, and future research directions.
 
 ## Data Flow
 
@@ -31,7 +32,15 @@ The main persistent objects are:
 - `ResearchProjectPaper`: project-to-paper membership.
 - `Paper`, `PaperChunk`, `PaperSummary`, `Highlight`: existing paper reading and retrieval data.
 
-The frontend calls project endpoints under `/api/research-projects`. Paper inspection still uses the existing `/api/papers` endpoints.
+The visible frontend uses:
+
+- `/api/research-workflows` for the autonomous question-to-brief flow.
+- `/api/research-workflows/{project_id}/approve` for the only required approval action.
+- `/api/research-workflows/{project_id}` for polling workflow status and triggering synthesis when papers are ready.
+- `/api/papers/upload`, `/api/papers/{paper_id}/summary`, `/api/papers/{paper_id}/chat`, and `/api/papers/{paper_id}/file` for the reader.
+- `/api/papers/batch-upload` and `/api/papers/batch-summary` for multi-PDF summarization.
+
+Older `/api/research-projects` routes remain as manual/debug endpoints.
 
 ## Citation Strategy
 
@@ -48,4 +57,3 @@ LangChain is used for the model-facing layer: prompt templates, structured outpu
 - MySQL JSON storage for embeddings.
 - No OCR for scanned PDFs.
 - No hosted auth or multi-user workflow.
-

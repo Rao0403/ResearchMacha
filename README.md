@@ -2,17 +2,13 @@
 
 ResearchMacha is a local-first research helper system for turning a research question into relevant papers, cited paper notes, cross-paper findings, and suggested next experiments.
 
-## V1 Scope
+## MVP Scope
 
-- Create research projects from a question or problem statement
-- Plan arXiv search queries with a LangChain-powered research planner
-- Search arXiv, rank candidates, and import selected papers
-- Upload local PDF papers manually
-- Persist a personal paper library in MySQL
-- Extract text, chunk it, summarize it, and generate cited highlights
-- Synthesize findings, gaps, experiments, and research directions across a paper collection
-- Chat with each paper using retrieval-grounded answers
-- Present everything in a focused research workbench UI
+ResearchMacha is now focused around three showcase workflows:
+
+- `Research`: type one research question, let the backend plan/search/select papers, approve the selected papers, then receive a cited research brief with findings, gaps, experiments, and research directions.
+- `Reader`: upload or open one PDF, read it beside structured notes, cited highlights, and a grounded chat panel.
+- `Batch Summary`: upload one or more PDFs and get a compact comparison table covering main idea, problem/hypothesis, experiments, models/datasets, results, and conclusions.
 
 ## Stack
 
@@ -62,14 +58,13 @@ ResearchMacha is a local-first research helper system for turning a research que
 
 ## Demo Flow
 
-1. Open the Projects page.
-2. Load the seeded demo project or create a new research question.
-3. Generate a research plan.
-4. Discover arXiv candidates.
-5. Select papers and import them.
-6. Wait for individual paper analysis to complete.
-7. Generate the cited synthesis brief.
-8. Open an imported paper to inspect highlights and ask grounded questions.
+1. Open `Research`, enter a research question, and submit.
+2. Review the LLM-selected arXiv papers and click `Approve selected papers`.
+3. Wait for imported papers to finish analysis and for the final cited brief to appear.
+4. Open `Reader`, upload a PDF or paste an existing paper id, then inspect notes/highlights and ask one grounded question.
+5. Open `Batch Summary`, upload multiple PDFs, and wait for the comparison table.
+
+Debug/manual project routes still exist under `/debug/...`, but the visible MVP navigation intentionally exposes only the three workflows above.
 
 ## AI Providers
 
