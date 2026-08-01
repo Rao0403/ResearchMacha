@@ -85,6 +85,26 @@ export interface UploadPaperResponse {
   job: Job;
 }
 
+export interface BatchUploadResponse {
+  items: UploadPaperResponse[];
+}
+
+export interface BatchPaperSummary {
+  paper_id: string;
+  title: string;
+  main_idea: string;
+  problem_or_hypothesis: string;
+  experiments: string;
+  models_and_datasets: string;
+  results: string;
+  conclusions: string;
+}
+
+export interface BatchSummaryResponse {
+  overall_takeaway: string;
+  papers: BatchPaperSummary[];
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";

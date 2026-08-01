@@ -1,10 +1,12 @@
-import { BookOpen, FolderKanban, Library, Search } from "lucide-react";
+import { BookOpen, Files, Search } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 
+import { BatchSummaryPage } from "./pages/BatchSummaryPage";
 import { LibraryPage } from "./pages/LibraryPage";
-import { PaperWorkspacePage } from "./pages/PaperWorkspacePage";
 import { ProjectListPage } from "./pages/ProjectListPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
+import { ReaderPage } from "./pages/ReaderPage";
+import { ResearchWorkflowPage } from "./pages/ResearchWorkflowPage";
 import { SearchPage } from "./pages/SearchPage";
 
 export function App() {
@@ -20,16 +22,16 @@ export function App() {
         </div>
         <nav className="nav-links">
           <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
-            <FolderKanban size={17} />
-            Projects
-          </NavLink>
-          <NavLink to="/discover" className={({ isActive }) => navClass(isActive)}>
             <Search size={17} />
-            Discover
+            Research
           </NavLink>
-          <NavLink to="/library" className={({ isActive }) => navClass(isActive)}>
-            <Library size={17} />
-            Library
+          <NavLink to="/reader" className={({ isActive }) => navClass(isActive)}>
+            <BookOpen size={17} />
+            Reader
+          </NavLink>
+          <NavLink to="/batch-summary" className={({ isActive }) => navClass(isActive)}>
+            <Files size={17} />
+            Batch Summary
           </NavLink>
         </nav>
         <div className="sidebar-note">
@@ -40,11 +42,15 @@ export function App() {
 
       <main className="page-frame">
         <Routes>
-          <Route path="/" element={<ProjectListPage />} />
-          <Route path="/discover" element={<SearchPage />} />
-          <Route path="/library" element={<LibraryPage />} />
-          <Route path="/projects/:projectId" element={<ProjectWorkspacePage />} />
-          <Route path="/papers/:paperId" element={<PaperWorkspacePage />} />
+          <Route path="/" element={<ResearchWorkflowPage />} />
+          <Route path="/reader" element={<ReaderPage />} />
+          <Route path="/reader/:paperId" element={<ReaderPage />} />
+          <Route path="/batch-summary" element={<BatchSummaryPage />} />
+          <Route path="/papers/:paperId" element={<ReaderPage />} />
+          <Route path="/debug/projects" element={<ProjectListPage />} />
+          <Route path="/debug/discover" element={<SearchPage />} />
+          <Route path="/debug/library" element={<LibraryPage />} />
+          <Route path="/debug/projects/:projectId" element={<ProjectWorkspacePage />} />
         </Routes>
       </main>
     </div>

@@ -1,4 +1,6 @@
 import type {
+  BatchSummaryResponse,
+  BatchUploadResponse,
   ChatResponse,
   Job,
   LibraryPaper,
@@ -40,6 +42,21 @@ export async function uploadPaper(formData: FormData): Promise<UploadPaperRespon
   });
 }
 
+export async function batchUploadPapers(formData: FormData): Promise<BatchUploadResponse> {
+  return request<BatchUploadResponse>("/papers/batch-upload", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function createBatchSummary(paperIds: string[], goal: string): Promise<BatchSummaryResponse> {
+  return request<BatchSummaryResponse>("/papers/batch-summary", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paper_ids: paperIds, goal }),
+  });
+}
+
 export async function listPapers(): Promise<LibraryPaper[]> {
   return request<LibraryPaper[]>("/papers");
 }
@@ -78,6 +95,26 @@ export async function createResearchProject(question: string): Promise<ResearchP
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question }),
   });
+}
+
+export async function createResearchWorkflow(question: string): Promise<ResearchProject> {
+  return request<ResearchProject>("/research-workflows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+}
+
+export async function approveResearchWorkflow(projectId: string, candidateIds: string[]): Promise<ResearchProject> {
+  return request<ResearchProject>(`/research-workflows/${projectId}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ candidate_ids: candidateIds }),
+  });
+}
+
+export async function getResearchWorkflow(projectId: string): Promise<ResearchProject> {
+  return request<ResearchProject>(`/research-workflows/${projectId}`);
 }
 
 export async function createDemoProject(): Promise<ResearchProject> {

@@ -674,10 +674,265 @@ textarea {
   background: rgba(164, 79, 42, 0.08);
 }
 
+.mvp-page {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.mvp-header {
+  max-width: 980px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1rem;
+}
+
+.mvp-header h2 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  line-height: 1.04;
+}
+
+.mvp-panel,
+.pdf-workspace,
+.reader-side-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 251, 245, 0.84);
+  box-shadow: 0 14px 40px rgba(57, 33, 14, 0.06);
+}
+
+.mvp-panel {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.panel-heading,
+.approval-row,
+.reader-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.panel-heading h3,
+.reader-title-row h3,
+.notes-list h4 {
+  margin: 0;
+}
+
+.research-command,
+.batch-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.batch-upload {
+  grid-template-columns: minmax(220px, 0.75fr) minmax(0, 1fr) auto;
+}
+
+.status-track {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.status-track li {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.55rem 0.75rem;
+  color: var(--muted);
+  text-align: center;
+  background: rgba(255, 251, 245, 0.66);
+  font-size: 0.9rem;
+}
+
+.status-track li.done {
+  border-color: rgba(47, 122, 85, 0.25);
+  color: var(--success);
+  background: rgba(47, 122, 85, 0.08);
+}
+
+.status-track li.current {
+  border-color: rgba(164, 79, 42, 0.32);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 860px;
+}
+
+.data-table th,
+.data-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.85rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.data-table td span {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.data-table input[type="checkbox"] {
+  width: auto;
+}
+
+.summary-table {
+  min-width: 1180px;
+}
+
+.simple-list {
+  display: grid;
+}
+
+.paper-status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.8rem 0;
+}
+
+.paper-status-row:last-child {
+  border-bottom: 0;
+}
+
+.approval-row {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.approval-row p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.reader-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+  gap: 0.8rem;
+}
+
+.reader-controls form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.7rem;
+}
+
+.reader-grid {
+  display: grid;
+  grid-template-columns: minmax(380px, 1.15fr) minmax(320px, 0.85fr);
+  gap: 1rem;
+  min-height: 760px;
+}
+
+.pdf-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(620px, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.reader-side-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.tab-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-row button {
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.tab-row button:hover,
+.tab-row button.tab-active {
+  transform: none;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.notes-list,
+.reader-chat {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+  padding: 1rem;
+  overflow: auto;
+}
+
+.notes-list section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1rem;
+}
+
+.notes-list section:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.notes-list p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.notes-list blockquote {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.7rem 0 0;
+  border-left: 3px solid var(--accent);
+  padding-left: 0.8rem;
+  color: var(--muted);
+}
+
+.empty-state {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  color: var(--muted);
+}
+
+.finding-row.compact {
+  box-shadow: none;
+}
+
 @media (max-width: 1080px) {
   .app-shell,
   .hero-card,
-  .workspace-grid {
+  .workspace-grid,
+  .reader-grid,
+  .reader-controls {
     grid-template-columns: 1fr;
   }
 
@@ -695,7 +950,9 @@ textarea {
   }
 
   .stage-grid,
-  .split-workbench {
+  .split-workbench,
+  .batch-upload,
+  .research-command {
     grid-template-columns: 1fr;
   }
 }
@@ -721,6 +978,17 @@ textarea {
   }
 
   .workbench-header {
+    display: grid;
+  }
+
+  .status-track {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .panel-heading,
+  .approval-row,
+  .reader-title-row,
+  .paper-status-row {
     display: grid;
   }
 }
