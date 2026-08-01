@@ -28,10 +28,9 @@ def save_upload_file(file: UploadFile) -> str:
 def save_remote_pdf(url: str, filename: str) -> str:
     ensure_storage_dirs()
     destination = settings.resolved_upload_dir / filename
-    with httpx.stream("GET", url, timeout=120) as response:
+    with httpx.stream("GET", url, timeout=120, follow_redirects=True) as response:
         response.raise_for_status()
         with destination.open("wb") as handle:
             for chunk in response.iter_bytes():
                 handle.write(chunk)
     return str(destination)
-
