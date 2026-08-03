@@ -289,74 +289,89 @@ class LangChainProvider(MockProvider):
             return super().embed_texts(texts)
 
     def plan_research(self, question: str) -> ResearchPlan:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You plan literature searches. Return focused arXiv search queries and concrete inclusion criteria.",
-                ),
-                ("human", "Research question: {question}"),
-            ]
-        )
-        chain = prompt | self.chat_model.with_structured_output(ResearchPlan)
-        return chain.invoke({"question": question})
+        try:
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "You plan literature searches. Return focused arXiv search queries and concrete inclusion criteria.",
+                    ),
+                    ("human", "Research question: {question}"),
+                ]
+            )
+            chain = prompt | self.chat_model.with_structured_output(ResearchPlan)
+            return chain.invoke({"question": question})
+        except Exception:
+            return super().plan_research(question)
 
     def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "Select the most relevant arXiv papers for the research question. Choose 3 to 5 papers. Return arxiv_id and rationale.",
-                ),
-                ("human", "Question: {question}\nCandidates:\n{candidates}"),
-            ]
-        )
-        chain = prompt | self.chat_model.with_structured_output(CandidateSelection)
-        return chain.invoke({"question": question, "candidates": format_candidates(candidates)})
+        try:
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "Select the most relevant arXiv papers for the research question. Choose 3 to 5 papers. Return arxiv_id and rationale.",
+                    ),
+                    ("human", "Question: {question}\nCandidates:\n{candidates}"),
+                ]
+            )
+            chain = prompt | self.chat_model.with_structured_output(CandidateSelection)
+            return chain.invoke({"question": question, "candidates": format_candidates(candidates)})
+        except Exception:
+            return super().select_relevant_candidates(question, candidates)
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "Summarize the paper using only supplied chunks. Every section needs citations with page, excerpt, chunk_id.",
-                ),
-                ("human", "Title: {title}\nChunks:\n{context}"),
-            ]
-        )
-        structured = prompt | self.chat_model.with_structured_output(PaperSummaryOutput)
-        output = structured.invoke({"title": paper_title, "context": format_chunks(chunks[:10])})
-        return SummaryPayload(
-            sections=output.sections,
-            section_citations=output.section_citations,
-            highlights=[highlight.model_dump() for highlight in output.highlights],
-        )
+        try:
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "Summarize the paper using only supplied chunks. Every section needs citations with page, excerpt, chunk_id.",
+                    ),
+                    ("human", "Title: {title}\nChunks:\n{context}"),
+                ]
+            )
+            structured = prompt | self.chat_model.with_structured_output(PaperSummaryOutput)
+            output = structured.invoke({"title": paper_title, "context": format_chunks(chunks[:10])})
+            return SummaryPayload(
+                sections=output.sections,
+                section_citations=output.section_citations,
+                highlights=[highlight.model_dump() for highlight in output.highlights],
+            )
+        except Exception:
+            return super().generate_summary(paper_title, chunks)
 
     def synthesize_collection(self, question: str, paper_contexts: list[dict[str, Any]]) -> ResearchBrief:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence.",
-                ),
-                ("human", "Question: {question}\nPaper evidence:\n{context}"),
-            ]
-        )
-        chain = prompt | self.chat_model.with_structured_output(ResearchBrief)
-        return chain.invoke({"question": question, "context": format_paper_contexts(paper_contexts)})
+        try:
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence.",
+                    ),
+                    ("human", "Question: {question}\nPaper evidence:\n{context}"),
+                ]
+            )
+            chain = prompt | self.chat_model.with_structured_output(ResearchBrief)
+            return chain.invoke({"question": question, "context": format_paper_contexts(paper_contexts)})
+        except Exception:
+            return super().synthesize_collection(question, paper_contexts)
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "Summarize a batch of research papers into a comparison table. Use only supplied evidence.",
-                ),
-                ("human", "Goal: {goal}\nPaper evidence:\n{context}"),
-            ]
-        )
-        chain = prompt | self.chat_model.with_structured_output(BatchSummary)
-        return chain.invoke({"goal": goal, "context": format_paper_contexts(paper_contexts)})
+        try:
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "Summarize a batch of research papers into a comparison table. Use only supplied evidence.",
+                    ),
+                    ("human", "Goal: {goal}\nPaper evidence:\n{context}"),
+                ]
+            )
+            chain = prompt | self.chat_model.with_structured_output(BatchSummary)
+            return chain.invoke({"goal": goal, "context": format_paper_contexts(paper_contexts)})
+        except Exception:
+            return super().summarize_batch(goal, paper_contexts)
 
     def answer_question(
         self,
@@ -365,25 +380,28 @@ class LangChainProvider(MockProvider):
         context_chunks: list[dict[str, Any]],
         history: list[dict[str, str]],
     ) -> ChatPayload:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "Answer using only the supplied paper chunks. If evidence is weak, say so. Include citations.",
-                ),
-                ("human", "Title: {title}\nQuestion: {question}\nHistory: {history}\nChunks:\n{context}"),
-            ]
-        )
-        chain = prompt | self.chat_model.with_structured_output(ChatOutput)
-        output = chain.invoke(
-            {
-                "title": paper_title,
-                "question": question,
-                "history": history[-6:],
-                "context": format_chunks(context_chunks),
-            }
-        )
-        return ChatPayload(answer=output.answer, citations=output.citations)
+        try:
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "Answer using only the supplied paper chunks. If evidence is weak, say so. Include citations.",
+                    ),
+                    ("human", "Title: {title}\nQuestion: {question}\nHistory: {history}\nChunks:\n{context}"),
+                ]
+            )
+            chain = prompt | self.chat_model.with_structured_output(ChatOutput)
+            output = chain.invoke(
+                {
+                    "title": paper_title,
+                    "question": question,
+                    "history": history[-6:],
+                    "context": format_chunks(context_chunks),
+                }
+            )
+            return ChatPayload(answer=output.answer, citations=output.citations)
+        except Exception:
+            return super().answer_question(paper_title, question, context_chunks, history)
 
 
 class HighlightOutput(BaseModel):
