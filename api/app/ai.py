@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,13 @@ except ImportError:  # pragma: no cover - exercised only before optional deps ar
     OpenAIEmbeddings = None
 
 settings = get_settings()
+StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
+
+STRICT_JSON_RULES = (
+    "Return only valid JSON. Do not include Markdown, prose, code fences, comments, or explanations. "
+    "The JSON must match the supplied schema exactly. Use double quotes for every string. "
+    "If evidence is missing, fill the required field with a concise uncertainty note instead of omitting it."
+)
 
 
 class EvidenceCitation(BaseModel):
@@ -290,49 +298,37 @@ class LangChainProvider(MockProvider):
 
     def plan_research(self, question: str) -> ResearchPlan:
         try:
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "You plan literature searches. Return focused arXiv search queries and concrete inclusion criteria.",
-                    ),
-                    ("human", "Research question: {question}"),
-                ]
+            return invoke_structured_json(
+                self.chat_model,
+                ResearchPlan,
+                "Plan a focused arXiv literature search with short keyword-style search queries and concrete inclusion criteria.",
+                "Research question: {question}",
+                {"question": question},
             )
-            chain = prompt | self.chat_model.with_structured_output(ResearchPlan)
-            return chain.invoke({"question": question})
         except Exception:
             return super().plan_research(question)
 
     def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
         try:
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "Select the most relevant arXiv papers for the research question. Choose 3 to 5 papers. Return arxiv_id and rationale.",
-                    ),
-                    ("human", "Question: {question}\nCandidates:\n{candidates}"),
-                ]
+            return invoke_structured_json(
+                self.chat_model,
+                CandidateSelection,
+                "Select the 3 to 5 most relevant arXiv candidates for the research question.",
+                "Question: {question}\nCandidates:\n{candidates}",
+                {"question": question, "candidates": format_candidates(candidates)},
             )
-            chain = prompt | self.chat_model.with_structured_output(CandidateSelection)
-            return chain.invoke({"question": question, "candidates": format_candidates(candidates)})
         except Exception:
             return super().select_relevant_candidates(question, candidates)
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
         try:
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "Summarize the paper using only supplied chunks. Every section needs citations with page, excerpt, chunk_id.",
-                    ),
-                    ("human", "Title: {title}\nChunks:\n{context}"),
-                ]
+            output = invoke_structured_json(
+                self.chat_model,
+                PaperSummaryOutput,
+                "Summarize the paper using only supplied chunks. Every section and highlight must cite supplied pages/chunks.",
+                "Title: {title}\nChunks:\n{context}",
+                {"title": paper_title, "context": format_chunks(chunks[:10])},
             )
-            structured = prompt | self.chat_model.with_structured_output(PaperSummaryOutput)
-            output = structured.invoke({"title": paper_title, "context": format_chunks(chunks[:10])})
             return SummaryPayload(
                 sections=output.sections,
                 section_citations=output.section_citations,
@@ -343,33 +339,25 @@ class LangChainProvider(MockProvider):
 
     def synthesize_collection(self, question: str, paper_contexts: list[dict[str, Any]]) -> ResearchBrief:
         try:
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence.",
-                    ),
-                    ("human", "Question: {question}\nPaper evidence:\n{context}"),
-                ]
+            return invoke_structured_json(
+                self.chat_model,
+                ResearchBrief,
+                "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence.",
+                "Question: {question}\nPaper evidence:\n{context}",
+                {"question": question, "context": format_paper_contexts(paper_contexts)},
             )
-            chain = prompt | self.chat_model.with_structured_output(ResearchBrief)
-            return chain.invoke({"question": question, "context": format_paper_contexts(paper_contexts)})
         except Exception:
             return super().synthesize_collection(question, paper_contexts)
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
         try:
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "Summarize a batch of research papers into a comparison table. Use only supplied evidence.",
-                    ),
-                    ("human", "Goal: {goal}\nPaper evidence:\n{context}"),
-                ]
+            return invoke_structured_json(
+                self.chat_model,
+                BatchSummary,
+                "Summarize a batch of research papers into a comparison table using only supplied evidence.",
+                "Goal: {goal}\nPaper evidence:\n{context}",
+                {"goal": goal, "context": format_paper_contexts(paper_contexts)},
             )
-            chain = prompt | self.chat_model.with_structured_output(BatchSummary)
-            return chain.invoke({"goal": goal, "context": format_paper_contexts(paper_contexts)})
         except Exception:
             return super().summarize_batch(goal, paper_contexts)
 
@@ -381,23 +369,17 @@ class LangChainProvider(MockProvider):
         history: list[dict[str, str]],
     ) -> ChatPayload:
         try:
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "Answer using only the supplied paper chunks. If evidence is weak, say so. Include citations.",
-                    ),
-                    ("human", "Title: {title}\nQuestion: {question}\nHistory: {history}\nChunks:\n{context}"),
-                ]
-            )
-            chain = prompt | self.chat_model.with_structured_output(ChatOutput)
-            output = chain.invoke(
+            output = invoke_structured_json(
+                self.chat_model,
+                ChatOutput,
+                "Answer using only the supplied paper chunks. If evidence is weak, say so. Include citations.",
+                "Title: {title}\nQuestion: {question}\nHistory: {history}\nChunks:\n{context}",
                 {
                     "title": paper_title,
                     "question": question,
                     "history": history[-6:],
                     "context": format_chunks(context_chunks),
-                }
+                },
             )
             return ChatPayload(answer=output.answer, citations=output.citations)
         except Exception:
@@ -422,10 +404,158 @@ class ChatOutput(BaseModel):
     citations: list[dict[str, str | int]]
 
 
+STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
+    "ResearchPlan": {
+        "search_queries": [
+            "retrieval augmented generation hallucination factuality",
+            "RAG question answering benchmark",
+        ],
+        "inclusion_criteria": [
+            "Directly addresses the research question.",
+            "Reports methods, experiments, or evaluation results.",
+        ],
+    },
+    "CandidateSelection": {
+        "selected": [
+            {
+                "arxiv_id": "2310.11511",
+                "rationale": "The abstract directly studies retrieval-augmented generation evaluation and factuality.",
+            }
+        ]
+    },
+    "PaperSummaryOutput": {
+        "sections": {
+            "problem_or_hypothesis": "The paper studies whether retrieval grounding improves factual question answering.",
+            "approach": "The authors compare a retrieval-augmented system against non-retrieval baselines.",
+            "experiments": "The paper evaluates models on benchmark question-answering datasets.",
+            "results": "The retrieval-augmented system improves grounded answer quality in the reported setting.",
+            "conclusion": "Retrieval can improve factuality when retrieved passages are relevant.",
+            "limitations_or_notes": "The supplied evidence is limited to the provided chunks.",
+        },
+        "section_citations": {
+            "problem_or_hypothesis": [{"page": 1, "excerpt": "The paper studies retrieval grounding.", "chunk_id": "chunk-1"}],
+            "approach": [{"page": 2, "excerpt": "The method retrieves relevant passages.", "chunk_id": "chunk-2"}],
+            "experiments": [{"page": 3, "excerpt": "Experiments use benchmark datasets.", "chunk_id": "chunk-3"}],
+            "results": [{"page": 4, "excerpt": "Results improve over baselines.", "chunk_id": "chunk-4"}],
+            "conclusion": [{"page": 5, "excerpt": "The authors conclude retrieval helps.", "chunk_id": "chunk-5"}],
+            "limitations_or_notes": [{"page": 6, "excerpt": "Limitations are discussed.", "chunk_id": "chunk-6"}],
+        },
+        "highlights": [
+            {
+                "position": 0,
+                "label": "Main result",
+                "explanation": "The strongest result is the improvement from retrieval grounding.",
+                "citations": [{"page": 4, "excerpt": "Results improve over baselines.", "chunk_id": "chunk-4"}],
+            }
+        ],
+    },
+    "ResearchBrief": {
+        "executive_summary": "The collection suggests retrieval grounding is useful, but evaluation quality varies.",
+        "key_findings": [
+            {
+                "label": "Retrieval helps factuality",
+                "summary": "Several papers report stronger grounded answering when retrieved passages are relevant.",
+                "citations": [{"paper_id": "paper-1", "title": "Example Paper", "page": 4, "excerpt": "Results improve.", "chunk_id": "chunk-4"}],
+            }
+        ],
+        "evidence_table": [
+            {
+                "label": "Example Paper",
+                "summary": "The paper evaluates retrieval-augmented answering against baselines.",
+                "citations": [{"paper_id": "paper-1", "title": "Example Paper", "page": 3, "excerpt": "Benchmark evaluation.", "chunk_id": "chunk-3"}],
+            }
+        ],
+        "conflicts_or_gaps": [
+            {
+                "label": "Evaluation gap",
+                "summary": "The evidence does not fully establish cross-domain robustness.",
+                "citations": [{"paper_id": "paper-1", "title": "Example Paper", "page": 6, "excerpt": "Limitations remain.", "chunk_id": "chunk-6"}],
+            }
+        ],
+        "suggested_experiments": [
+            {
+                "label": "Controlled ablation",
+                "summary": "Compare retrieval, fine-tuning, and combined systems under the same datasets and metrics.",
+                "citations": [{"paper_id": "paper-1", "title": "Example Paper", "page": 3, "excerpt": "Benchmark setup.", "chunk_id": "chunk-3"}],
+            }
+        ],
+        "suggested_research_directions": [
+            {
+                "label": "Robust retrieval",
+                "summary": "Study retrieval quality under noisy or domain-shifted queries.",
+                "citations": [{"paper_id": "paper-1", "title": "Example Paper", "page": 6, "excerpt": "Limitations remain.", "chunk_id": "chunk-6"}],
+            }
+        ],
+    },
+    "BatchSummary": {
+        "overall_takeaway": "The uploaded papers focus on related methods but vary in datasets and evaluation depth.",
+        "papers": [
+            {
+                "paper_id": "paper-1",
+                "title": "Example Paper",
+                "main_idea": "Retrieval improves grounded question answering.",
+                "problem_or_hypothesis": "The paper tests whether retrieval reduces unsupported answers.",
+                "experiments": "The authors compare retrieval and non-retrieval baselines.",
+                "models_and_datasets": "The paper reports the models and datasets available in the supplied evidence.",
+                "results": "The retrieval setup improves the reported metrics.",
+                "conclusions": "Retrieval is useful when evidence passages are relevant.",
+            }
+        ],
+    },
+    "ChatOutput": {
+        "answer": "The supplied chunks support the claim that retrieval improves answer grounding, but the evidence is limited to the retrieved passages.",
+        "citations": [{"page": 4, "excerpt": "Results improve over baselines.", "chunk_id": "chunk-4"}],
+    },
+}
+
+
+def invoke_structured_json(
+    chat_model: Any,
+    output_model: type[StructuredModel],
+    task: str,
+    human_template: str,
+    payload: dict[str, Any],
+) -> StructuredModel:
+    schema_name = output_model.__name__
+    schema = json.dumps(output_model.model_json_schema(), ensure_ascii=True)
+    example = json.dumps(STRUCTURED_OUTPUT_EXAMPLES[schema_name], ensure_ascii=True)
+    system_prompt = (
+        f"{STRICT_JSON_RULES}\n\n"
+        f"Task: {task}\n\n"
+        f"JSON schema:\n{schema}\n\n"
+        f"Example valid JSON:\n{example}"
+    )
+    retry_system_prompt = (
+        f"{STRICT_JSON_RULES}\n\n"
+        "The previous attempt did not produce valid schema-compliant JSON. "
+        "Try once more and return only one JSON object.\n\n"
+        f"Task: {task}\n\n"
+        f"JSON schema:\n{schema}\n\n"
+        f"Example valid JSON:\n{example}"
+    )
+
+    try:
+        return invoke_structured_once(chat_model, output_model, system_prompt, human_template, payload)
+    except Exception:
+        return invoke_structured_once(chat_model, output_model, retry_system_prompt, human_template, payload)
+
+
+def invoke_structured_once(
+    chat_model: Any,
+    output_model: type[StructuredModel],
+    system_prompt: str,
+    human_template: str,
+    payload: dict[str, Any],
+) -> StructuredModel:
+    prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", human_template)])
+    chain = prompt | chat_model.with_structured_output(output_model)
+    return chain.invoke(payload)
+
+
 def build_chat_model() -> Any:
     if settings.ai_provider == "openai":
         return ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key)
-    return ChatOllama(model=settings.ollama_chat_model, base_url=settings.ollama_base_url, temperature=0)
+    return ChatOllama(model=settings.ollama_chat_model, base_url=settings.ollama_base_url, temperature=0, format="json")
 
 
 def build_embedding_model() -> Any:
