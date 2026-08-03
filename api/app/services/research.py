@@ -71,6 +71,12 @@ def start_research_workflow(db: Session, question: str) -> ResearchProject:
 def select_recommended_candidates(db: Session, project_id: str) -> ResearchProject:
     project = get_project_or_404(db, project_id)
     candidates = sorted(project.candidates, key=lambda candidate: candidate.score, reverse=True)
+    if not candidates:
+        project.status = "no_candidates"
+        db.add(project)
+        db.commit()
+        return get_project_or_404(db, project_id)
+
     candidate_payloads = [candidate_to_payload(candidate) for candidate in candidates]
 
     try:

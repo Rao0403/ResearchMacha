@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import re
 from xml.etree import ElementTree
 
 import httpx
@@ -24,12 +25,56 @@ class ArxivEntry:
 def search_arxiv(query: str, max_results: int = 12) -> list[ArxivEntry]:
     response = httpx.get(
         ARXIV_API,
-        params={"search_query": f"all:{query}", "start": 0, "max_results": max_results},
+        params={"search_query": build_search_query(query), "start": 0, "max_results": max_results},
         timeout=30,
         follow_redirects=True,
     )
     response.raise_for_status()
     return parse_feed(response.text)
+
+
+def build_search_query(query: str) -> str:
+    terms = extract_search_terms(query)
+    if not terms:
+        return f"all:{query.strip()}"
+    if len(terms) == 1:
+        return f"all:{terms[0]}"
+    return " OR ".join(f"all:{term}" for term in terms[:6])
+
+
+def extract_search_terms(query: str) -> list[str]:
+    stopwords = {
+        "about",
+        "after",
+        "against",
+        "and",
+        "are",
+        "based",
+        "between",
+        "can",
+        "for",
+        "from",
+        "how",
+        "into",
+        "paper",
+        "papers",
+        "research",
+        "study",
+        "that",
+        "the",
+        "this",
+        "using",
+        "what",
+        "with",
+    }
+    seen: set[str] = set()
+    terms: list[str] = []
+    for token in re.findall(r"[a-z0-9]+", query.lower()):
+        if len(token) < 3 or token in stopwords or token in seen:
+            continue
+        seen.add(token)
+        terms.append(token)
+    return terms
 
 
 def fetch_arxiv_entry(arxiv_id: str) -> ArxivEntry:

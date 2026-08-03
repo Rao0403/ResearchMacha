@@ -4,7 +4,7 @@
 
 - MySQL running locally.
 - Ollama installed.
-- `llama3.2:1b` available in Ollama.
+- `gpt-oss:20b-cloud` available through Ollama.
 - Python environment installed under `api/.venv`.
 - npm dependencies installed under `web/node_modules`.
 
@@ -17,7 +17,7 @@ ollama list
 The preferred model line is:
 
 ```text
-llama3.2:1b
+gpt-oss:20b-cloud
 ```
 
 ## Environment
@@ -31,7 +31,7 @@ MYSQL_USER=root
 MYSQL_PASSWORD=your-password
 MYSQL_DATABASE=research_macha
 AI_PROVIDER=ollama
-OLLAMA_CHAT_MODEL=llama3.2:1b
+OLLAMA_CHAT_MODEL=gpt-oss:20b-cloud
 ```
 
 Create the database in MySQL:

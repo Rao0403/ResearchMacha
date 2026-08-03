@@ -34,7 +34,7 @@ ResearchMacha is now focused around three showcase workflows:
 
 1. Copy `.env.example` to `.env` and fill in your MySQL connection values.
 2. Create the MySQL database named in `MYSQL_DATABASE`.
-3. Make sure Ollama has a small local model available. The recommended demo model is `llama3.2:1b`.
+3. Make sure Ollama can access the configured chat model. The current default is `gpt-oss:20b-cloud`.
 4. Backend:
 
    ```bash
@@ -69,7 +69,7 @@ Debug/manual project routes still exist under `/debug/...`, but the visible MVP 
 ## AI Providers
 
 - `AI_PROVIDER=mock` gives a deterministic local flow for scaffolding and UI testing.
-- `AI_PROVIDER=ollama` uses your local Ollama instance. The default chat model is `llama3.2:1b`.
+- `AI_PROVIDER=ollama` uses your local Ollama instance. The default chat model is `gpt-oss:20b-cloud`.
 - `AI_PROVIDER=openai` uses the configured OpenAI key and model.
 
 ## Documentation

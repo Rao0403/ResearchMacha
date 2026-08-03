@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.ai import EvidenceCitation, MockProvider, PaperFinding, ResearchBrief
-from app.services.arxiv import ARXIV_API, ArxivEntry
+from app.services.arxiv import ARXIV_API, ArxivEntry, build_search_query
 from app.services.research import ensure_cited_brief, score_candidate
 
 
@@ -72,6 +72,15 @@ def test_cited_brief_passes_validation() -> None:
 
 def test_arxiv_api_uses_https() -> None:
     assert ARXIV_API.startswith("https://")
+
+
+def test_arxiv_query_builder_uses_keywords_without_raw_question_syntax() -> None:
+    query = build_search_query("How can RAG reduce hallucinations in retrieval augmented generation?")
+
+    assert " OR " in query
+    assert "all:reduce" in query
+    assert "all:hallucinations" in query
+    assert "how" not in query
 
 
 def test_mock_candidate_selection_uses_top_ranked_papers() -> None:

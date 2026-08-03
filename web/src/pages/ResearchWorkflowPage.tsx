@@ -123,7 +123,14 @@ export function ResearchWorkflowPage() {
 
           <CandidateTable candidates={project.candidates} selected={selected} onToggle={toggleCandidate} />
 
-          {project.status === "awaiting_approval" ? (
+          {project.status === "no_candidates" ? (
+            <p className="status-note">
+              No arXiv candidates were found for this question. Try a more specific question with concrete methods,
+              datasets, or keywords.
+            </p>
+          ) : null}
+
+          {project.status === "awaiting_approval" && project.candidates.length > 0 ? (
             <div className="approval-row">
               <p>{selected.size} papers selected. You can unselect weak matches before continuing.</p>
               <button type="button" onClick={() => void handleApprove()} disabled={approving || selected.size === 0}>
@@ -190,6 +197,9 @@ function getStepIndex(status: string | undefined, busy: boolean) {
   }
   if (status === "awaiting_approval") {
     return 2;
+  }
+  if (status === "no_candidates") {
+    return 1;
   }
   if (["importing", "analyzing"].includes(status)) {
     return 3;

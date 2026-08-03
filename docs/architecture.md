@@ -11,7 +11,7 @@ ResearchMacha is an agentic RAG research workbench. The showcase demo has three 
 - Database: MySQL
 - ORM and migrations: SQLAlchemy, Alembic
 - Agent/RAG layer: LangChain
-- Local model runtime: Ollama, defaulting to `llama3.2:1b`
+- Local model runtime: Ollama, defaulting to `gpt-oss:20b-cloud`
 - PDF parsing: pypdf
 
 ## Pipeline
