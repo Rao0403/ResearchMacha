@@ -33,6 +33,7 @@ def list_projects(db: Session) -> list[ResearchProject]:
 def get_project_or_404(db: Session, project_id: str) -> ResearchProject:
     project = (
         db.query(ResearchProject)
+        .populate_existing()
         .options(
             selectinload(ResearchProject.candidates),
             selectinload(ResearchProject.papers).selectinload(ResearchProjectPaper.paper),
@@ -70,7 +71,12 @@ def start_research_workflow(db: Session, question: str) -> ResearchProject:
 
 def select_recommended_candidates(db: Session, project_id: str) -> ResearchProject:
     project = get_project_or_404(db, project_id)
-    candidates = sorted(project.candidates, key=lambda candidate: candidate.score, reverse=True)
+    candidates = (
+        db.query(ResearchCandidate)
+        .filter(ResearchCandidate.project_id == project_id)
+        .order_by(ResearchCandidate.score.desc())
+        .all()
+    )
     if not candidates:
         project.status = "no_candidates"
         db.add(project)
