@@ -547,9 +547,13 @@ def invoke_structured_once(
     human_template: str,
     payload: dict[str, Any],
 ) -> StructuredModel:
-    prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", human_template)])
+    prompt = ChatPromptTemplate.from_messages([("system", escape_template_text(system_prompt)), ("human", human_template)])
     chain = prompt | chat_model.with_structured_output(output_model)
     return chain.invoke(payload)
+
+
+def escape_template_text(value: str) -> str:
+    return value.replace("{", "{{").replace("}", "}}")
 
 
 def build_chat_model() -> Any:
