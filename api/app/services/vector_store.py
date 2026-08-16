@@ -97,7 +97,8 @@ class QdrantVectorStore:
         self.client.upsert(collection_name=self.collection, points=points)
 
     def delete_paper_chunks(self, paper_id: str) -> None:
-        self.ensure_collection(self.vector_size or get_settings().embedding_dim)
+        if not self.client.collection_exists(collection_name=self.collection):
+            return
         self.client.delete(
             collection_name=self.collection,
             points_selector=qmodels.FilterSelector(filter=self.paper_filter(paper_id)),

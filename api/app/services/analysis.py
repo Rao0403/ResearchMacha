@@ -10,7 +10,7 @@ from app.models.paper import ChatMessage, ChatSession, Highlight, Job, Paper, Pa
 from app.schemas.paper import ChatMessageRead, ChatResponse
 from app.ai import get_ai_provider
 from app.services.pdf import chunk_pages, extract_pdf_pages
-from app.services.retrieval import top_k_chunks
+from app.services.vector_store import get_vector_store
 
 
 def enqueue_analysis_job(db: Session, paper_id: str, background_tasks: BackgroundTasks, auto_reset: bool) -> Job:
@@ -19,6 +19,7 @@ def enqueue_analysis_job(db: Session, paper_id: str, background_tasks: Backgroun
         raise HTTPException(status_code=404, detail="Paper not found")
 
     if auto_reset:
+        get_vector_store().delete_paper_chunks(paper_id)
         db.query(PaperChunk).filter(PaperChunk.paper_id == paper_id).delete()
         db.query(Highlight).filter(Highlight.paper_id == paper_id).delete()
         db.query(PaperSummary).filter(PaperSummary.paper_id == paper_id).delete()
@@ -77,6 +78,7 @@ def process_analysis_job(job_id: str) -> None:
             .order_by(PaperChunk.chunk_index.asc())
             .all()
         )
+        get_vector_store().upsert_chunks(stored_chunks)
         chunk_payload = [
             {
                 "id": chunk.id,
@@ -140,7 +142,7 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
     history = [{"role": message.role, "content": message.content} for message in session.messages]
     provider = get_ai_provider()
     question_embedding = provider.embed_texts([question])[0]
-    retrieved = top_k_chunks(question_embedding, paper.chunks, limit=4)
+    retrieved = get_vector_store().search_paper_chunks(db, paper.id, question_embedding, limit=4)
 
     chunk_payload = [
         {

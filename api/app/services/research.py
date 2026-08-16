@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, object_session, selectinload
 
 from app.ai import BatchSummary, MockProvider, ResearchBrief, get_ai_provider
 from app.models.paper import Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
@@ -13,6 +13,7 @@ from app.schemas.research import ResearchCandidateRead, ResearchProjectRead
 from app.services.analysis import enqueue_analysis_job
 from app.services.arxiv import ArxivEntry, fetch_arxiv_entry, search_arxiv
 from app.services.papers import create_or_update_paper_from_arxiv
+from app.services.vector_store import get_vector_store
 
 DEMO_QUESTION = "How can retrieval augmented generation improve factuality in domain-specific question answering?"
 DEMO_ARXIV_IDS = ["2005.11401", "2310.11511", "2403.10131"]
@@ -244,12 +245,13 @@ def synthesize_project(db: Session, project_id: str) -> ResearchProject:
 
 def build_paper_contexts(project: ResearchProject) -> list[dict[str, Any]]:
     contexts = []
+    db = object_session(project)
     for link in project.papers:
         paper = link.paper
         if paper is None:
             continue
         summary = paper.summary
-        chunks = sorted(paper.chunks, key=lambda chunk: chunk.chunk_index)[:8]
+        chunks = select_context_chunks(db, paper, project.question, limit=8) if db is not None else first_chunks(paper, limit=8)
         if summary is None and not chunks:
             continue
         contexts.append(
@@ -263,7 +265,7 @@ def build_paper_contexts(project: ResearchProject) -> list[dict[str, Any]]:
     return contexts
 
 
-def build_paper_contexts_by_ids(db: Session, paper_ids: list[str]) -> list[dict[str, Any]]:
+def build_paper_contexts_by_ids(db: Session, paper_ids: list[str], query: str | None = None) -> list[dict[str, Any]]:
     if not paper_ids:
         return []
     papers = (
@@ -274,7 +276,7 @@ def build_paper_contexts_by_ids(db: Session, paper_ids: list[str]) -> list[dict[
     )
     contexts = []
     for paper in papers:
-        chunks = sorted(paper.chunks, key=lambda chunk: chunk.chunk_index)[:8]
+        chunks = select_context_chunks(db, paper, query or paper.title, limit=8)
         if paper.summary is None and not chunks:
             continue
         contexts.append(
@@ -289,13 +291,28 @@ def build_paper_contexts_by_ids(db: Session, paper_ids: list[str]) -> list[dict[
 
 
 def summarize_batch_papers(db: Session, paper_ids: list[str], goal: str) -> BatchSummary:
-    contexts = build_paper_contexts_by_ids(db, paper_ids)
+    contexts = build_paper_contexts_by_ids(db, paper_ids, query=goal)
     if not contexts:
         raise HTTPException(status_code=400, detail="No analyzed paper evidence is available for batch summary")
     try:
         return get_ai_provider().summarize_batch(goal, contexts)
     except Exception:
         return MockProvider().summarize_batch(goal, contexts)
+
+
+def select_context_chunks(db: Session, paper: Paper, query: str, limit: int) -> list[PaperChunk]:
+    try:
+        query_embedding = get_ai_provider().embed_texts([query])[0]
+        chunks = get_vector_store().search_paper_chunks(db, paper.id, query_embedding, limit=limit)
+        if chunks:
+            return chunks
+    except Exception:
+        pass
+    return first_chunks(paper, limit)
+
+
+def first_chunks(paper: Paper, limit: int) -> list[PaperChunk]:
+    return sorted(paper.chunks, key=lambda chunk: chunk.chunk_index)[:limit]
 
 
 def summarize_existing_paper(summary: PaperSummary | None, paper: Paper) -> str:
