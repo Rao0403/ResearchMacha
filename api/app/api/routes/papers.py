@@ -143,7 +143,12 @@ def get_paper_file(paper_id: str, db: Session = Depends(get_db)) -> FileResponse
     file_path = Path(paper.pdf_path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="PDF not found on disk")
-    return FileResponse(file_path, media_type="application/pdf", filename=file_path.name)
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename=file_path.name,
+        content_disposition_type="inline",
+    )
 
 
 @router.post("/papers/{paper_id}/chat", response_model=ChatResponse)

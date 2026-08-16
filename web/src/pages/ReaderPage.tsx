@@ -174,7 +174,12 @@ export function ReaderPage() {
                   <h3>{paper.title}</h3>
                   <p className="authors">{paper.authors.join(", ") || "Uploaded paper"}</p>
                 </div>
-                <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
+                <div className="reader-actions">
+                  <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
+                  <a href={getPdfUrl(paper.id)} target="_blank" rel="noreferrer">
+                    Open PDF
+                  </a>
+                </div>
               </div>
               <iframe title={paper.title} src={getPdfUrl(paper.id)} className="pdf-frame" />
             </>
