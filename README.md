@@ -17,6 +17,7 @@ ResearchMacha is now focused around three showcase workflows:
 - Agent/RAG layer: LangChain with Ollama-first local models
 - AI providers: `mock`, `ollama`, and `openai`
 - Embeddings: local deterministic fallback for development, provider-backed where available
+- Vector retrieval: MySQL JSON embeddings by default, optional Qdrant for stronger local vector search
 
 ## Repository Layout
 
@@ -35,7 +36,21 @@ ResearchMacha is now focused around three showcase workflows:
 1. Copy `.env.example` to `.env` and fill in your MySQL connection values.
 2. Create the MySQL database named in `MYSQL_DATABASE`.
 3. Make sure Ollama can access the configured chat model. The current default is `gpt-oss:20b-cloud`.
-4. Backend:
+4. Optional: start Qdrant if you want vector DB mode.
+
+   ```bash
+   docker compose up -d qdrant
+   ```
+
+   Then set:
+
+   ```env
+   VECTOR_PROVIDER=qdrant
+   QDRANT_URL=http://localhost:6333
+   QDRANT_COLLECTION=research_macha_chunks
+   ```
+
+5. Backend:
 
    ```bash
    cd api
@@ -46,7 +61,7 @@ ResearchMacha is now focused around three showcase workflows:
    uvicorn app.main:app --reload --port 8000
    ```
 
-5. Frontend:
+6. Frontend:
 
    ```bash
    cd web
@@ -54,7 +69,7 @@ ResearchMacha is now focused around three showcase workflows:
    npm run dev
    ```
 
-6. Open `http://localhost:5173`.
+7. Open `http://localhost:5173`.
 
 ## Demo Flow
 
@@ -82,5 +97,5 @@ Debug/manual project routes still exist under `/debug/...`, but the visible MVP 
 - V1 assumes born-digital PDFs and does not include OCR.
 - Online discovery is limited to arXiv.
 - The analysis worker runs in-process through FastAPI background tasks.
-- Vector search is implemented in-app for V1 scale rather than using a dedicated vector database.
+- Qdrant is optional. Existing papers need re-analysis before their chunks are inserted into Qdrant.
 - LangChain is used as a clear chain layer, not as an autonomous multi-agent loop.

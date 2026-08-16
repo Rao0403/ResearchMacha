@@ -12,6 +12,7 @@ ResearchMacha is an agentic RAG research workbench. The showcase demo has three 
 - ORM and migrations: SQLAlchemy, Alembic
 - Agent/RAG layer: LangChain
 - Local model runtime: Ollama, defaulting to `gpt-oss:20b-cloud`
+- Vector DB: optional Qdrant, with MySQL JSON embedding fallback
 - PDF parsing: pypdf
 
 ## Pipeline
@@ -19,9 +20,10 @@ ResearchMacha is an agentic RAG research workbench. The showcase demo has three 
 1. Planner: LangChain turns a research question into arXiv search queries and inclusion criteria.
 2. Finder: the backend searches arXiv and ranks candidates with a transparent relevance score.
 3. Selector: LangChain chooses the most relevant candidate papers for user approval, with a deterministic top-3 fallback.
-4. Reader: approved or uploaded PDFs are imported, parsed, chunked, embedded, summarized, and highlighted.
-5. Synthesizer: LangChain reads available paper evidence and produces a cited brief.
-6. Direction generator: the same synthesis output includes gaps, suggested experiments, and future research directions.
+4. Reader: approved or uploaded PDFs are imported, parsed, chunked, embedded, indexed, summarized, and highlighted.
+5. Retriever: chat and collection synthesis retrieve question-relevant chunks through the vector store, using Qdrant when enabled and MySQL cosine similarity as fallback.
+6. Synthesizer: LangChain reads available paper evidence and produces a cited brief.
+7. Direction generator: the same synthesis output includes gaps, suggested experiments, and future research directions.
 
 ## Data Flow
 
@@ -31,6 +33,8 @@ The main persistent objects are:
 - `ResearchCandidate`: arXiv candidates ranked for a project.
 - `ResearchProjectPaper`: project-to-paper membership.
 - `Paper`, `PaperChunk`, `PaperSummary`, `Highlight`: existing paper reading and retrieval data.
+
+MySQL remains the source of truth. Qdrant only stores chunk vectors and payload metadata keyed by `PaperChunk.id`, so it can be rebuilt by re-analyzing papers.
 
 The visible frontend uses:
 
@@ -54,6 +58,6 @@ LangChain is used for the model-facing layer: prompt templates, structured outpu
 
 - arXiv-only discovery.
 - In-process background jobs.
-- MySQL JSON storage for embeddings.
+- MySQL JSON storage remains the default embedding store; Qdrant is opt-in with `VECTOR_PROVIDER=qdrant`.
 - No OCR for scanned PDFs.
 - No hosted auth or multi-user workflow.
