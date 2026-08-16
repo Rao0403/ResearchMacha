@@ -22,6 +22,7 @@ dependencies = [
   "pypdf>=5.0.1",
   "python-dotenv>=1.0.1",
   "python-multipart>=0.0.12",
+  "qdrant-client>=1.11.0",
   "sqlalchemy>=2.0.35",
   "uvicorn[standard]>=0.31.0",
 ]

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
 
     upload_dir: str = "api/uploads"
     embedding_dim: int = 64
+    vector_provider: str = "mysql"
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str | None = None
+    qdrant_collection: str = "research_macha_chunks"
+    qdrant_vector_size: int | None = None
 
     ai_provider: str = "mock"
     openai_api_key: str | None = None
