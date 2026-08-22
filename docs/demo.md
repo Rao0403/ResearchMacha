@@ -32,7 +32,7 @@ MYSQL_PASSWORD=your-password
 MYSQL_DATABASE=research_macha
 AI_PROVIDER=ollama
 OLLAMA_CHAT_MODEL=gpt-oss:20b-cloud
-VECTOR_PROVIDER=mysql
+VECTOR_PROVIDER=qdrant
 ```
 
 Create the database in MySQL:
@@ -41,7 +41,7 @@ Create the database in MySQL:
 CREATE DATABASE research_macha;
 ```
 
-Optional Qdrant vector DB mode:
+Start Qdrant for the default vector retrieval path:
 
 ```powershell
 docker compose up -d qdrant
@@ -118,4 +118,4 @@ http://localhost:5173
 - If arXiv import fails, check network access and retry with fewer selected papers.
 - If MySQL migration fails, verify `.env` and that the database exists.
 - If a summary endpoint returns `No analyzed paper evidence`, wait for the paper statuses to become `ready`.
-- If `VECTOR_PROVIDER=qdrant` is enabled but Qdrant is down, the app falls back to MySQL retrieval. Restart Qdrant and re-analyze papers to populate the vector collection.
+- If Qdrant is down, the app falls back to MySQL retrieval. Restart Qdrant and re-analyze papers to populate the vector collection.

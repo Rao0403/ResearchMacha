@@ -12,7 +12,7 @@ ResearchMacha is an agentic RAG research workbench. The showcase demo has three 
 - ORM and migrations: SQLAlchemy, Alembic
 - Agent/RAG layer: LangChain
 - Local model runtime: Ollama, defaulting to `gpt-oss:20b-cloud`
-- Vector DB: optional Qdrant, with MySQL JSON embedding fallback
+- Vector DB: Qdrant by default, with MySQL JSON embedding fallback
 - PDF parsing: pypdf
 
 ## Pipeline
@@ -21,7 +21,7 @@ ResearchMacha is an agentic RAG research workbench. The showcase demo has three 
 2. Finder: the backend searches arXiv and ranks candidates with a transparent relevance score.
 3. Selector: LangChain chooses the most relevant candidate papers for user approval, with a deterministic top-3 fallback.
 4. Reader: approved or uploaded PDFs are imported, parsed, chunked, embedded, indexed, summarized, and highlighted.
-5. Retriever: chat and collection synthesis retrieve question-relevant chunks through the vector store, using Qdrant when enabled and MySQL cosine similarity as fallback.
+5. Retriever: chat and collection synthesis retrieve question-relevant chunks through the vector store, using Qdrant first and MySQL cosine similarity as fallback.
 6. Synthesizer: LangChain reads available paper evidence and produces a cited brief.
 7. Direction generator: the same synthesis output includes gaps, suggested experiments, and future research directions.
 
@@ -58,6 +58,6 @@ LangChain is used for the model-facing layer: prompt templates, structured outpu
 
 - arXiv-only discovery.
 - In-process background jobs.
-- MySQL JSON storage remains the default embedding store; Qdrant is opt-in with `VECTOR_PROVIDER=qdrant`.
+- Qdrant is the default retrieval provider. MySQL JSON embeddings remain the fallback when Qdrant is unavailable or disabled.
 - No OCR for scanned PDFs.
 - No hosted auth or multi-user workflow.

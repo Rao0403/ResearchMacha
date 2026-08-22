@@ -17,7 +17,7 @@ ResearchMacha is now focused around three showcase workflows:
 - Agent/RAG layer: LangChain with Ollama-first local models
 - AI providers: `mock`, `ollama`, and `openai`
 - Embeddings: local deterministic fallback for development, provider-backed where available
-- Vector retrieval: MySQL JSON embeddings by default, optional Qdrant for stronger local vector search
+- Vector retrieval: Qdrant by default with MySQL JSON cosine similarity as fallback
 
 ## Repository Layout
 
@@ -36,7 +36,7 @@ ResearchMacha is now focused around three showcase workflows:
 1. Copy `.env.example` to `.env` and fill in your MySQL connection values.
 2. Create the MySQL database named in `MYSQL_DATABASE`.
 3. Make sure Ollama can access the configured chat model. The current default is `gpt-oss:20b-cloud`.
-4. Optional: start Qdrant if you want vector DB mode.
+4. Start Qdrant for the recommended retrieval path.
 
    ```bash
    docker compose up -d qdrant
@@ -97,5 +97,5 @@ Debug/manual project routes still exist under `/debug/...`, but the visible MVP 
 - V1 assumes born-digital PDFs and does not include OCR.
 - Online discovery is limited to arXiv.
 - The analysis worker runs in-process through FastAPI background tasks.
-- Qdrant is optional. Existing papers need re-analysis before their chunks are inserted into Qdrant.
+- If Qdrant is unavailable, retrieval falls back to MySQL JSON embeddings. Existing papers need re-analysis before their chunks are inserted into Qdrant.
 - LangChain is used as a clear chain layer, not as an autonomous multi-agent loop.
