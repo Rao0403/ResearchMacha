@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { approveResearchWorkflow, createResearchWorkflow, getResearchWorkflow } from "../lib/api";
-import type { AgentRun, AgentStep, ResearchBrief, ResearchCandidate, ResearchFinding, ResearchProject } from "../types";
+import type { AgentRun, AgentStep, ResearchBrief, ResearchCandidate, ResearchFinding, ResearchMemory, ResearchProject } from "../types";
 
 const workflowSteps = ["Planning", "Finding papers", "Awaiting approval", "Analyzing", "Synthesizing", "Done"];
 
@@ -112,6 +112,7 @@ export function ResearchWorkflowPage() {
       {message ? <p className="status-note">{message}</p> : null}
 
       {project?.agent_run ? <AgentTrace run={project.agent_run} /> : null}
+      {project?.memory_signals?.length ? <MemorySignals memories={project.memory_signals} /> : null}
 
       {project ? (
         <section className="mvp-panel">
@@ -194,9 +195,36 @@ function AgentTrace({ run }: { run: AgentRun }) {
             <div>
               <strong>{toolLabel(step.tool_name)}</strong>
               <p>{stepSummary(step)}</p>
+              {memoryStepSummary(step) ? <p className="memory-note">{memoryStepSummary(step)}</p> : null}
               {fallbackSummary(step) ? <p className="fallback-note">{fallbackSummary(step)}</p> : null}
             </div>
             <span className={`status-pill status-${step.status}`}>{step.status}</span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MemorySignals({ memories }: { memories: ResearchMemory[] }) {
+  return (
+    <section className="mvp-panel memory-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Memory signals</p>
+          <h3>What this workflow can reuse</h3>
+        </div>
+      </div>
+      <div className="memory-list">
+        {memories.map((memory) => (
+          <article className="memory-row" key={memory.id}>
+            <div>
+              <span className="memory-meta">
+                {memory.scope} / {memory.memory_type} / importance {memory.importance}
+              </span>
+              <p>{memory.text}</p>
+            </div>
+            <span className="status-pill">{memory.source}</span>
           </article>
         ))}
       </div>
@@ -232,7 +260,7 @@ function stepSummary(step: AgentStep) {
     return `${numberValue(output.candidate_count)} candidates ranked by relevance`;
   }
   if (step.tool_name === "select_candidates") {
-    return `${numberValue(output.selected_count)} papers selected for approval`;
+    return `${numberValue(output.selected_count)} papers selected for approval${memoryCountSuffix(output)}`;
   }
   if (step.tool_name === "import_papers") {
     return `${countArray(output.imported_papers)} PDFs imported`;
@@ -241,9 +269,28 @@ function stepSummary(step: AgentStep) {
     return `${countArray(output.queued_jobs)} analysis jobs queued`;
   }
   if (step.tool_name === "synthesize_brief") {
-    return `${numberValue(output.key_findings)} findings, ${numberValue(output.suggested_experiments)} experiment ideas`;
+    return `${numberValue(output.key_findings)} findings, ${numberValue(output.suggested_experiments)} experiment ideas${memoryCountSuffix(output)}`;
   }
   return step.status === "running" ? "Running..." : "Completed.";
+}
+
+function memoryStepSummary(step: AgentStep) {
+  const output = step.output_json ?? {};
+  const input = step.input_json ?? {};
+  const memoryCount = numberValue(output.memory_count ?? input.memory_count);
+  if (!memoryCount) {
+    return null;
+  }
+  const adjusted = output.memory_adjusted_candidates;
+  if (Array.isArray(adjusted) && adjusted.length > 0) {
+    return `Memory used: ${memoryCount} signals, adjusted ${adjusted.length} candidate scores.`;
+  }
+  return `Memory checked: ${memoryCount} signals.`;
+}
+
+function memoryCountSuffix(output: Record<string, unknown>) {
+  const memoryCount = numberValue(output.memory_count);
+  return memoryCount ? ` using ${memoryCount} memory signals` : "";
 }
 
 function fallbackSummary(step: AgentStep) {

@@ -180,6 +180,21 @@ export interface AgentRun {
   steps: AgentStep[];
 }
 
+export interface ResearchMemory {
+  id: string;
+  scope: string;
+  memory_type: string;
+  text: string;
+  importance: number;
+  metadata_json?: Record<string, unknown> | null;
+  project_id?: string | null;
+  paper_id?: string | null;
+  source: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ResearchProject {
   id: string;
   question: string;
@@ -192,4 +207,5 @@ export interface ResearchProject {
   candidates: ResearchCandidate[];
   papers: LibraryPaper[];
   agent_run?: AgentRun | null;
+  memory_signals: ResearchMemory[];
 }

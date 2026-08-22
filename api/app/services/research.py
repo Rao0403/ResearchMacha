@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, object_session, selectinload
 
 from app.ai import BatchSummary, MockProvider, ResearchBrief, get_ai_provider
 from app.models.paper import AgentRun, Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
+from app.schemas.memory import ResearchMemoryRead
 from app.schemas.paper import LibraryPaperRead
 from app.schemas.research import AgentRunRead, AgentStepRead, ResearchCandidateRead, ResearchProjectRead
 from app.services.agent_trace import (
@@ -22,7 +23,7 @@ from app.services.agent_trace import (
 from app.services.analysis import enqueue_analysis_job
 from app.services.arxiv import ArxivEntry, fetch_arxiv_entry, search_arxiv
 from app.services.fallbacks import record_fallback
-from app.services.memory import create_memory, memory_payload, retrieve_memories
+from app.services.memory import create_memory, latest_memories, memory_payload, retrieve_memories
 from app.services.papers import create_or_update_paper_from_arxiv
 from app.services.vector_store import get_vector_store
 
@@ -62,6 +63,11 @@ def get_project_or_404(db: Session, project_id: str) -> ResearchProject:
 def serialize_project(project: ResearchProject) -> ResearchProjectRead:
     papers = [LibraryPaperRead.model_validate(link.paper) for link in project.papers if link.paper is not None]
     latest_run = sorted(project.agent_runs, key=lambda run: run.created_at, reverse=True)[0] if project.agent_runs else None
+    db = object_session(project)
+    if db is not None:
+        memories = latest_memories(db, project_id=project.id, limit=8)
+    else:
+        memories = sorted(project.memories, key=lambda memory: memory.updated_at, reverse=True)[:8]
     agent_run = None
     if latest_run is not None:
         agent_run = AgentRunRead(
@@ -88,6 +94,7 @@ def serialize_project(project: ResearchProject) -> ResearchProjectRead:
         candidates=[ResearchCandidateRead.model_validate(candidate) for candidate in sorted(project.candidates, key=lambda item: item.score, reverse=True)],
         papers=papers,
         agent_run=agent_run,
+        memory_signals=[ResearchMemoryRead.model_validate(memory) for memory in memories],
     )
 
 

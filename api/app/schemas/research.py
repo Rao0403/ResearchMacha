@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.memory import ResearchMemoryRead
 from app.schemas.paper import LibraryPaperRead
 
 
@@ -84,3 +85,4 @@ class ResearchProjectRead(BaseModel):
     candidates: list[ResearchCandidateRead] = Field(default_factory=list)
     papers: list[LibraryPaperRead] = Field(default_factory=list)
     agent_run: AgentRunRead | None = None
+    memory_signals: list[ResearchMemoryRead] = Field(default_factory=list)

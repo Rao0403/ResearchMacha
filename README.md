@@ -18,6 +18,7 @@ ResearchMacha is now focused around three showcase workflows:
 - AI providers: `mock`, `ollama`, and `openai`
 - Embeddings: local deterministic fallback for development, provider-backed where available
 - Vector retrieval: Qdrant by default with MySQL JSON cosine similarity as fallback
+- Memory: MySQL source-of-truth rows indexed into Qdrant for semantic recall, with MySQL fallback
 
 ## Repository Layout
 
@@ -48,6 +49,7 @@ ResearchMacha is now focused around three showcase workflows:
    VECTOR_PROVIDER=qdrant
    QDRANT_URL=http://localhost:6333
    QDRANT_COLLECTION=research_macha_chunks
+   QDRANT_MEMORY_COLLECTION=research_macha_memories
    ```
 
 5. Backend:
@@ -76,8 +78,9 @@ ResearchMacha is now focused around three showcase workflows:
 1. Open `Research`, enter a research question, and submit.
 2. Review the LLM-selected arXiv papers and click `Approve selected papers`.
 3. Wait for imported papers to finish analysis and for the final cited brief to appear.
-4. Open `Reader`, upload a PDF or paste an existing paper id, then inspect notes/highlights and ask one grounded question.
-5. Open `Batch Summary`, upload multiple PDFs, and wait for the comparison table.
+4. Inspect the agent trace and memory signals to see whether planning, selection, retrieval, or fallback paths were used.
+5. Open `Reader`, upload a PDF or paste an existing paper id, then inspect notes/highlights and ask one grounded question.
+6. Open `Batch Summary`, upload multiple PDFs, and wait for the comparison table.
 
 Debug/manual project routes still exist under `/debug/...`, but the visible MVP navigation intentionally exposes only the three workflows above.
 
@@ -97,5 +100,5 @@ Debug/manual project routes still exist under `/debug/...`, but the visible MVP 
 - V1 assumes born-digital PDFs and does not include OCR.
 - Online discovery is limited to arXiv.
 - The analysis worker runs in-process through FastAPI background tasks.
-- If Qdrant is unavailable, retrieval falls back to MySQL JSON embeddings. Existing papers need re-analysis before their chunks are inserted into Qdrant.
+- If Qdrant is unavailable, chunk retrieval and memory recall fall back to MySQL JSON embeddings. Existing papers need re-analysis before their chunks and paper memories are inserted into Qdrant.
 - LangChain is used as a clear chain layer, not as an autonomous multi-agent loop.

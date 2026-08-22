@@ -33,6 +33,7 @@ MYSQL_DATABASE=research_macha
 AI_PROVIDER=ollama
 OLLAMA_CHAT_MODEL=gpt-oss:20b-cloud
 VECTOR_PROVIDER=qdrant
+QDRANT_MEMORY_COLLECTION=research_macha_memories
 ```
 
 Create the database in MySQL:
@@ -53,6 +54,7 @@ Then set:
 VECTOR_PROVIDER=qdrant
 QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=research_macha_chunks
+QDRANT_MEMORY_COLLECTION=research_macha_memories
 ```
 
 Reinstall backend dependencies after pulling this change:
@@ -94,8 +96,9 @@ http://localhost:5173
 2. Type a research question and press Enter or click `Start`.
 3. Review the recommended arXiv papers selected by the LLM/ranking layer.
 4. Optionally unselect weak matches, then click `Approve selected papers`.
-5. Wait while the backend imports PDFs, analyzes each paper, and synthesizes the final brief.
-6. Inspect cited findings, gaps, suggested experiments, and research directions.
+5. Check the agent trace and memory signals panel after approval.
+6. Wait while the backend imports PDFs, analyzes each paper, and synthesizes the final brief.
+7. Inspect cited findings, gaps, suggested experiments, and research directions.
 
 ### Paper Reader
 
@@ -118,4 +121,4 @@ http://localhost:5173
 - If arXiv import fails, check network access and retry with fewer selected papers.
 - If MySQL migration fails, verify `.env` and that the database exists.
 - If a summary endpoint returns `No analyzed paper evidence`, wait for the paper statuses to become `ready`.
-- If Qdrant is down, the app falls back to MySQL retrieval. Restart Qdrant and re-analyze papers to populate the vector collection.
+- If Qdrant is down, the app falls back to MySQL retrieval and memory recall. Restart Qdrant and re-analyze papers to populate the vector collections.
