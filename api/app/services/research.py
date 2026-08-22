@@ -10,6 +10,15 @@ from app.ai import BatchSummary, MockProvider, ResearchBrief, get_ai_provider
 from app.models.paper import AgentRun, Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
 from app.schemas.paper import LibraryPaperRead
 from app.schemas.research import AgentRunRead, AgentStepRead, ResearchCandidateRead, ResearchProjectRead
+from app.services.agent_trace import (
+    complete_agent_step,
+    create_agent_run,
+    fail_agent_step,
+    latest_agent_run,
+    set_agent_run_status,
+    start_agent_step,
+    summarize_candidates_for_trace,
+)
 from app.services.analysis import enqueue_analysis_job
 from app.services.arxiv import ArxivEntry, fetch_arxiv_entry, search_arxiv
 from app.services.papers import create_or_update_paper_from_arxiv
@@ -82,12 +91,19 @@ def serialize_project(project: ResearchProject) -> ResearchProjectRead:
 
 def start_research_workflow(db: Session, question: str) -> ResearchProject:
     project = create_project(db, question)
-    project = plan_project(db, project.id)
-    project = discover_candidates(db, project.id)
-    return select_recommended_candidates(db, project.id)
+    agent_run = create_agent_run(db, project.id, question)
+    try:
+        project = plan_project(db, project.id, agent_run)
+        project = discover_candidates(db, project.id, agent_run=agent_run)
+        project = select_recommended_candidates(db, project.id, agent_run)
+        set_agent_run_status(db, agent_run, project.status)
+        return project
+    except Exception as exc:
+        set_agent_run_status(db, agent_run, "failed", str(exc))
+        raise
 
 
-def select_recommended_candidates(db: Session, project_id: str) -> ResearchProject:
+def select_recommended_candidates(db: Session, project_id: str, agent_run: AgentRun | None = None) -> ResearchProject:
     project = get_project_or_404(db, project_id)
     candidates = (
         db.query(ResearchCandidate)
@@ -95,10 +111,17 @@ def select_recommended_candidates(db: Session, project_id: str) -> ResearchProje
         .order_by(ResearchCandidate.score.desc())
         .all()
     )
+    step = start_agent_step(
+        db,
+        agent_run,
+        "select_candidates",
+        {"candidate_count": len(candidates), "question": project.question},
+    )
     if not candidates:
         project.status = "no_candidates"
         db.add(project)
         db.commit()
+        complete_agent_step(db, step, {"selected_count": 0, "status": project.status})
         return get_project_or_404(db, project_id)
 
     candidate_payloads = [candidate_to_payload(candidate) for candidate in candidates]
@@ -123,54 +146,119 @@ def select_recommended_candidates(db: Session, project_id: str) -> ResearchProje
     project.status = "awaiting_approval"
     db.add(project)
     db.commit()
+    complete_agent_step(
+        db,
+        step,
+        {
+            "selected_count": sum(1 for candidate in candidates if candidate.selected),
+            "selected_arxiv_ids": [candidate.arxiv_id for candidate in candidates if candidate.selected],
+            "top_candidates": summarize_candidates_for_trace(candidates),
+            "status": project.status,
+        },
+    )
     return get_project_or_404(db, project_id)
 
 
-def plan_project(db: Session, project_id: str) -> ResearchProject:
+def plan_project(db: Session, project_id: str, agent_run: AgentRun | None = None) -> ResearchProject:
     project = get_project_or_404(db, project_id)
-    plan = get_ai_provider().plan_research(project.question)
+    step = start_agent_step(db, agent_run, "plan_search", {"question": project.question})
+    try:
+        plan = get_ai_provider().plan_research(project.question)
+    except Exception as exc:
+        fail_agent_step(db, step, exc)
+        raise
     project.generated_queries = plan.search_queries
     project.inclusion_criteria = plan.inclusion_criteria
     project.status = "planned"
     db.add(project)
     db.commit()
+    complete_agent_step(
+        db,
+        step,
+        {
+            "search_queries": plan.search_queries,
+            "inclusion_criteria": plan.inclusion_criteria,
+            "status": project.status,
+        },
+    )
     return get_project_or_404(db, project.id)
 
 
-def discover_candidates(db: Session, project_id: str, max_per_query: int = 6) -> ResearchProject:
+def discover_candidates(db: Session, project_id: str, max_per_query: int = 6, agent_run: AgentRun | None = None) -> ResearchProject:
     project = get_project_or_404(db, project_id)
     if not project.generated_queries:
-        project = plan_project(db, project_id)
+        project = plan_project(db, project_id, agent_run)
 
     seen = {candidate.arxiv_id: candidate for candidate in project.candidates}
-    for query in project.generated_queries[:4]:
-        for entry in search_arxiv(query, max_results=max_per_query):
-            score, rationale = score_candidate(project.question, entry)
-            candidate = seen.get(entry.arxiv_id)
-            if candidate is None:
-                candidate = ResearchCandidate(
-                    project_id=project.id,
-                    arxiv_id=entry.arxiv_id,
-                    title=entry.title,
-                    authors=entry.authors,
-                    abstract=entry.abstract,
-                    year=entry.year,
-                    pdf_url=entry.pdf_url,
-                    entry_url=entry.entry_url,
-                    score=score,
-                    rationale=rationale,
-                    selected=False,
-                )
-                seen[entry.arxiv_id] = candidate
-            else:
-                candidate.score = max(candidate.score, score)
-                candidate.rationale = rationale if score >= candidate.score else candidate.rationale
-            db.add(candidate)
+    search_step = start_agent_step(
+        db,
+        agent_run,
+        "search_arxiv",
+        {"queries": project.generated_queries[:4], "max_per_query": max_per_query},
+    )
+    rank_step = None
+    query_counts: list[dict[str, Any]] = []
+    try:
+        for query in project.generated_queries[:4]:
+            entries = search_arxiv(query, max_results=max_per_query)
+            query_counts.append({"query": query, "result_count": len(entries)})
+            for entry in entries:
+                score, rationale = score_candidate(project.question, entry)
+                candidate = seen.get(entry.arxiv_id)
+                if candidate is None:
+                    candidate = ResearchCandidate(
+                        project_id=project.id,
+                        arxiv_id=entry.arxiv_id,
+                        title=entry.title,
+                        authors=entry.authors,
+                        abstract=entry.abstract,
+                        year=entry.year,
+                        pdf_url=entry.pdf_url,
+                        entry_url=entry.entry_url,
+                        score=score,
+                        rationale=rationale,
+                        selected=False,
+                    )
+                    seen[entry.arxiv_id] = candidate
+                else:
+                    previous_score = candidate.score
+                    candidate.score = max(candidate.score, score)
+                    candidate.rationale = rationale if score >= previous_score else candidate.rationale
+                db.add(candidate)
+        complete_agent_step(
+            db,
+            search_step,
+            {
+                "queries": query_counts,
+                "unique_candidate_count": len(seen),
+            },
+        )
+        rank_step = start_agent_step(
+            db,
+            agent_run,
+            "rank_candidates",
+            {"candidate_count": len(seen), "ranking_method": "keyword overlap + recency boost"},
+        )
+    except Exception as exc:
+        fail_agent_step(db, search_step, exc)
+        raise
 
     project.status = "discovered"
     db.add(project)
     db.commit()
-    return get_project_or_404(db, project.id)
+    project = get_project_or_404(db, project.id)
+    complete_agent_step(
+        db,
+        rank_step,
+        {
+            "candidate_count": len(project.candidates),
+            "top_candidates": summarize_candidates_for_trace(
+                sorted(project.candidates, key=lambda candidate: candidate.score, reverse=True)
+            ),
+            "status": project.status,
+        },
+    )
+    return project
 
 
 def import_selected_candidates(
@@ -178,6 +266,7 @@ def import_selected_candidates(
     project_id: str,
     candidate_ids: list[str],
     background_tasks: BackgroundTasks,
+    agent_run: AgentRun | None = None,
 ) -> ResearchProject:
     project = get_project_or_404(db, project_id)
     if not candidate_ids:
@@ -189,9 +278,19 @@ def import_selected_candidates(
     if not candidates:
         raise HTTPException(status_code=404, detail="No matching candidates found")
 
+    import_step = start_agent_step(
+        db,
+        agent_run,
+        "import_papers",
+        {"candidate_ids": candidate_ids, "candidate_count": len(candidates)},
+    )
+    analyze_step = None
+    imported_papers: list[dict[str, Any]] = []
+    queued_jobs: list[dict[str, Any]] = []
     for candidate in candidates:
         entry = fetch_arxiv_entry(candidate.arxiv_id)
         paper, _ = create_or_update_paper_from_arxiv(db, entry)
+        imported_papers.append({"paper_id": paper.id, "arxiv_id": candidate.arxiv_id, "title": paper.title})
         candidate.selected = True
         link_exists = (
             db.query(ResearchProjectPaper)
@@ -200,7 +299,17 @@ def import_selected_candidates(
         )
         if link_exists is None:
             db.add(ResearchProjectPaper(project_id=project_id, paper_id=paper.id, role="evidence"))
-        enqueue_analysis_job(db, paper.id, background_tasks, auto_reset=True)
+        job = enqueue_analysis_job(db, paper.id, background_tasks, auto_reset=True)
+        queued_jobs.append({"paper_id": paper.id, "job_id": job.id, "status": job.status})
+
+    complete_agent_step(db, import_step, {"imported_papers": imported_papers})
+    analyze_step = start_agent_step(
+        db,
+        agent_run,
+        "analyze_papers",
+        {"paper_ids": [item["paper_id"] for item in imported_papers]},
+    )
+    complete_agent_step(db, analyze_step, {"queued_jobs": queued_jobs})
 
     project.status = "importing"
     db.add(project)
@@ -214,10 +323,12 @@ def approve_research_workflow(
     candidate_ids: list[str],
     background_tasks: BackgroundTasks,
 ) -> ResearchProject:
-    project = import_selected_candidates(db, project_id, candidate_ids, background_tasks)
+    agent_run = latest_agent_run(db, project_id) or create_agent_run(db, project_id, f"Approve papers for project {project_id}")
+    project = import_selected_candidates(db, project_id, candidate_ids, background_tasks, agent_run)
     project.status = "analyzing"
     db.add(project)
     db.commit()
+    set_agent_run_status(db, agent_run, project.status)
     return get_project_or_404(db, project_id)
 
 
@@ -229,6 +340,7 @@ def get_workflow_status(db: Session, project_id: str) -> ResearchProject:
 
 
 def maybe_synthesize_ready_project(db: Session, project: ResearchProject) -> ResearchProject:
+    agent_run = latest_agent_run(db, project.id)
     papers = [link.paper for link in project.papers if link.paper is not None]
     if not papers:
         return project
@@ -236,27 +348,57 @@ def maybe_synthesize_ready_project(db: Session, project: ResearchProject) -> Res
         project.status = "failed"
         db.add(project)
         db.commit()
+        set_agent_run_status(db, agent_run, "failed", "At least one imported paper analysis failed.")
         return get_project_or_404(db, project.id)
     if all(paper.status == "ready" for paper in papers) and not project.synthesis_json:
         project.status = "synthesizing"
         db.add(project)
         db.commit()
-        return synthesize_project(db, project.id)
+        set_agent_run_status(db, agent_run, project.status)
+        return synthesize_project(db, project.id, agent_run)
     return project
 
 
-def synthesize_project(db: Session, project_id: str) -> ResearchProject:
+def synthesize_project(db: Session, project_id: str, agent_run: AgentRun | None = None) -> ResearchProject:
     project = get_project_or_404(db, project_id)
+    agent_run = agent_run or latest_agent_run(db, project_id)
     contexts = build_paper_contexts(project)
     if not contexts:
         raise HTTPException(status_code=400, detail="No analyzed paper evidence is available for synthesis")
 
-    brief = get_ai_provider().synthesize_collection(project.question, contexts)
-    ensure_cited_brief(brief)
+    step = start_agent_step(
+        db,
+        agent_run,
+        "synthesize_brief",
+        {
+            "paper_count": len(contexts),
+            "chunk_counts": [len(context.get("chunks", [])) for context in contexts],
+            "question": project.question,
+        },
+    )
+    try:
+        brief = get_ai_provider().synthesize_collection(project.question, contexts)
+        ensure_cited_brief(brief)
+    except Exception as exc:
+        fail_agent_step(db, step, exc)
+        set_agent_run_status(db, agent_run, "failed", str(exc))
+        raise
     project.synthesis_json = brief.model_dump()
     project.status = "done"
     db.add(project)
     db.commit()
+    complete_agent_step(
+        db,
+        step,
+        {
+            "key_findings": len(brief.key_findings),
+            "evidence_rows": len(brief.evidence_table),
+            "suggested_experiments": len(brief.suggested_experiments),
+            "suggested_research_directions": len(brief.suggested_research_directions),
+            "status": project.status,
+        },
+    )
+    set_agent_run_status(db, agent_run, project.status)
     return get_project_or_404(db, project.id)
 
 
