@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { approveResearchWorkflow, createResearchWorkflow, getResearchWorkflow } from "../lib/api";
-import type { ResearchBrief, ResearchCandidate, ResearchFinding, ResearchProject } from "../types";
+import type { AgentRun, AgentStep, ResearchBrief, ResearchCandidate, ResearchFinding, ResearchProject } from "../types";
 
 const workflowSteps = ["Planning", "Finding papers", "Awaiting approval", "Analyzing", "Synthesizing", "Done"];
 
@@ -111,6 +111,8 @@ export function ResearchWorkflowPage() {
       <StatusTrack status={project?.status} busy={submitting} />
       {message ? <p className="status-note">{message}</p> : null}
 
+      {project?.agent_run ? <AgentTrace run={project.agent_run} /> : null}
+
       {project ? (
         <section className="mvp-panel">
           <div className="panel-heading">
@@ -173,6 +175,82 @@ export function ResearchWorkflowPage() {
       ) : null}
     </div>
   );
+}
+
+function AgentTrace({ run }: { run: AgentRun }) {
+  return (
+    <section className="mvp-panel agent-trace-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Agent trace</p>
+          <h3>Tool execution timeline</h3>
+        </div>
+        <span className={`status-pill status-${run.status}`}>{run.status}</span>
+      </div>
+      <div className="agent-trace">
+        {run.steps.map((step) => (
+          <article className={`trace-step trace-${step.status}`} key={step.id}>
+            <span className="trace-dot" />
+            <div>
+              <strong>{toolLabel(step.tool_name)}</strong>
+              <p>{stepSummary(step)}</p>
+            </div>
+            <span className={`status-pill status-${step.status}`}>{step.status}</span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function toolLabel(toolName: string) {
+  const labels: Record<string, string> = {
+    plan_search: "Plan search",
+    search_arxiv: "Search arXiv",
+    rank_candidates: "Rank candidates",
+    select_candidates: "Select candidates",
+    import_papers: "Import papers",
+    analyze_papers: "Analyze papers",
+    synthesize_brief: "Synthesize brief",
+  };
+  return labels[toolName] ?? toolName.replace(/_/g, " ");
+}
+
+function stepSummary(step: AgentStep) {
+  if (step.status === "failed") {
+    return step.error_message ?? "Step failed.";
+  }
+  const output = step.output_json ?? {};
+  if (step.tool_name === "plan_search") {
+    return `${countArray(output.search_queries)} search queries, ${countArray(output.inclusion_criteria)} criteria`;
+  }
+  if (step.tool_name === "search_arxiv") {
+    return `${numberValue(output.unique_candidate_count)} unique candidates from arXiv`;
+  }
+  if (step.tool_name === "rank_candidates") {
+    return `${numberValue(output.candidate_count)} candidates ranked by relevance`;
+  }
+  if (step.tool_name === "select_candidates") {
+    return `${numberValue(output.selected_count)} papers selected for approval`;
+  }
+  if (step.tool_name === "import_papers") {
+    return `${countArray(output.imported_papers)} PDFs imported`;
+  }
+  if (step.tool_name === "analyze_papers") {
+    return `${countArray(output.queued_jobs)} analysis jobs queued`;
+  }
+  if (step.tool_name === "synthesize_brief") {
+    return `${numberValue(output.key_findings)} findings, ${numberValue(output.suggested_experiments)} experiment ideas`;
+  }
+  return step.status === "running" ? "Running..." : "Completed.";
+}
+
+function countArray(value: unknown) {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" ? value : 0;
 }
 
 function StatusTrack({ status, busy }: { status?: string; busy: boolean }) {

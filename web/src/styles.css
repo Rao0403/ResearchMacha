@@ -775,6 +775,58 @@ textarea {
   background: var(--accent-soft);
 }
 
+.agent-trace-panel {
+  gap: 0.75rem;
+}
+
+.agent-trace {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.trace-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 0;
+}
+
+.trace-step:last-child {
+  border-bottom: 0;
+}
+
+.trace-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgba(156, 107, 31, 0.1);
+}
+
+.trace-completed .trace-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 4px rgba(47, 122, 85, 0.1);
+}
+
+.trace-failed .trace-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgba(142, 61, 61, 0.1);
+}
+
+.trace-step strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.trace-step p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -999,7 +1051,8 @@ textarea {
   .panel-heading,
   .approval-row,
   .reader-title-row,
-  .paper-status-row {
+  .paper-status-row,
+  .trace-step {
     display: grid;
   }
 }

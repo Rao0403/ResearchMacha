@@ -151,6 +151,35 @@ export interface ResearchBrief {
   suggested_research_directions: ResearchFinding[];
 }
 
+export interface AgentStep {
+  id: string;
+  run_id: string;
+  project_id: string;
+  position: number;
+  tool_name: string;
+  status: string;
+  input_json?: Record<string, unknown> | null;
+  output_json?: Record<string, unknown> | null;
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentRun {
+  id: string;
+  project_id: string;
+  status: string;
+  goal: string;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string;
+  finished_at?: string | null;
+  steps: AgentStep[];
+}
+
 export interface ResearchProject {
   id: string;
   question: string;
@@ -162,4 +191,5 @@ export interface ResearchProject {
   updated_at: string;
   candidates: ResearchCandidate[];
   papers: LibraryPaper[];
+  agent_run?: AgentRun | null;
 }
