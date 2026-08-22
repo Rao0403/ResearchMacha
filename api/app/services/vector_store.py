@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.paper import PaperChunk
+from app.services.fallbacks import record_fallback
 from app.services.retrieval import top_k_chunks
 
 try:
@@ -182,13 +183,25 @@ class FallbackVectorStore:
     def upsert_chunks(self, chunks: list[PaperChunk]) -> None:
         try:
             self.primary.upsert_chunks(chunks)
-        except Exception:
+        except Exception as exc:
+            record_fallback(
+                "vector_store.upsert_chunks",
+                f"{self.fallback.name}.upsert_chunks",
+                str(exc),
+                {"primary": self.primary.name, "chunk_count": len(chunks)},
+            )
             self.fallback.upsert_chunks(chunks)
 
     def delete_paper_chunks(self, paper_id: str) -> None:
         try:
             self.primary.delete_paper_chunks(paper_id)
-        except Exception:
+        except Exception as exc:
+            record_fallback(
+                "vector_store.delete_paper_chunks",
+                f"{self.fallback.name}.delete_paper_chunks",
+                str(exc),
+                {"primary": self.primary.name, "paper_id": paper_id},
+            )
             self.fallback.delete_paper_chunks(paper_id)
 
     def search_paper_chunks(
@@ -202,8 +215,19 @@ class FallbackVectorStore:
             results = self.primary.search_paper_chunks(db, paper_id, query_embedding, limit)
             if results:
                 return results
-        except Exception:
-            pass
+            record_fallback(
+                "vector_store.search_paper_chunks",
+                f"{self.fallback.name}.search_paper_chunks",
+                "Primary vector store returned no chunks.",
+                {"primary": self.primary.name, "paper_id": paper_id, "limit": limit},
+            )
+        except Exception as exc:
+            record_fallback(
+                "vector_store.search_paper_chunks",
+                f"{self.fallback.name}.search_paper_chunks",
+                str(exc),
+                {"primary": self.primary.name, "paper_id": paper_id, "limit": limit},
+            )
         return self.fallback.search_paper_chunks(db, paper_id, query_embedding, limit)
 
 
@@ -213,6 +237,7 @@ def get_vector_store() -> VectorStore:
     if settings.vector_provider == "qdrant":
         try:
             return FallbackVectorStore(QdrantVectorStore())
-        except Exception:
+        except Exception as exc:
+            record_fallback("vector_store.provider", "mysql", str(exc), {"vector_provider": settings.vector_provider})
             return MySQLVectorStore()
     return MySQLVectorStore()

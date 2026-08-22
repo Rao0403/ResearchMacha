@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.services.fallbacks import record_fallback
 
 try:
     from langchain_core.prompts import ChatPromptTemplate
@@ -290,10 +291,12 @@ class LangChainProvider(MockProvider):
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if self.embedding_model is None:
+            record_fallback("ai.embed_texts", "hash_embedding", "No provider embedding model is configured.")
             return super().embed_texts(texts)
         try:
             return self.embedding_model.embed_documents(texts)
-        except Exception:
+        except Exception as exc:
+            record_fallback("ai.embed_texts", "hash_embedding", str(exc), {"text_count": len(texts)})
             return super().embed_texts(texts)
 
     def plan_research(self, question: str) -> ResearchPlan:
@@ -305,7 +308,8 @@ class LangChainProvider(MockProvider):
                 "Research question: {question}",
                 {"question": question},
             )
-        except Exception:
+        except Exception as exc:
+            record_fallback("ai.plan_research", "mock.plan_research", str(exc))
             return super().plan_research(question)
 
     def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
@@ -317,7 +321,8 @@ class LangChainProvider(MockProvider):
                 "Question: {question}\nCandidates:\n{candidates}",
                 {"question": question, "candidates": format_candidates(candidates)},
             )
-        except Exception:
+        except Exception as exc:
+            record_fallback("ai.select_relevant_candidates", "mock.select_relevant_candidates", str(exc), {"candidate_count": len(candidates)})
             return super().select_relevant_candidates(question, candidates)
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
@@ -334,7 +339,8 @@ class LangChainProvider(MockProvider):
                 section_citations=output.section_citations,
                 highlights=[highlight.model_dump() for highlight in output.highlights],
             )
-        except Exception:
+        except Exception as exc:
+            record_fallback("ai.generate_summary", "mock.generate_summary", str(exc), {"chunk_count": len(chunks), "paper_title": paper_title})
             return super().generate_summary(paper_title, chunks)
 
     def synthesize_collection(self, question: str, paper_contexts: list[dict[str, Any]]) -> ResearchBrief:
@@ -346,7 +352,8 @@ class LangChainProvider(MockProvider):
                 "Question: {question}\nPaper evidence:\n{context}",
                 {"question": question, "context": format_paper_contexts(paper_contexts)},
             )
-        except Exception:
+        except Exception as exc:
+            record_fallback("ai.synthesize_collection", "mock.synthesize_collection", str(exc), {"paper_count": len(paper_contexts)})
             return super().synthesize_collection(question, paper_contexts)
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
@@ -358,7 +365,8 @@ class LangChainProvider(MockProvider):
                 "Goal: {goal}\nPaper evidence:\n{context}",
                 {"goal": goal, "context": format_paper_contexts(paper_contexts)},
             )
-        except Exception:
+        except Exception as exc:
+            record_fallback("ai.summarize_batch", "mock.summarize_batch", str(exc), {"paper_count": len(paper_contexts)})
             return super().summarize_batch(goal, paper_contexts)
 
     def answer_question(
@@ -382,7 +390,8 @@ class LangChainProvider(MockProvider):
                 },
             )
             return ChatPayload(answer=output.answer, citations=output.citations)
-        except Exception:
+        except Exception as exc:
+            record_fallback("ai.answer_question", "mock.answer_question", str(exc), {"chunk_count": len(context_chunks)})
             return super().answer_question(paper_title, question, context_chunks, history)
 
 
@@ -630,6 +639,9 @@ def get_ai_provider() -> AIProvider:
     if settings.ai_provider in {"ollama", "openai"}:
         try:
             return LangChainProvider()
-        except Exception:
+        except Exception as exc:
+            record_fallback("ai.provider", "mock_provider", str(exc), {"ai_provider": settings.ai_provider})
             return MockProvider()
+    if settings.ai_provider != "mock":
+        record_fallback("ai.provider", "mock_provider", f"Unknown AI_PROVIDER={settings.ai_provider}")
     return MockProvider()

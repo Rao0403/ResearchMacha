@@ -827,6 +827,11 @@ textarea {
   line-height: 1.45;
 }
 
+.trace-step .fallback-note {
+  margin-top: 0.35rem;
+  color: var(--warning);
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;

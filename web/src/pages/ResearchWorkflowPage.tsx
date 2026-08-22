@@ -194,6 +194,7 @@ function AgentTrace({ run }: { run: AgentRun }) {
             <div>
               <strong>{toolLabel(step.tool_name)}</strong>
               <p>{stepSummary(step)}</p>
+              {fallbackSummary(step) ? <p className="fallback-note">{fallbackSummary(step)}</p> : null}
             </div>
             <span className={`status-pill status-${step.status}`}>{step.status}</span>
           </article>
@@ -243,6 +244,16 @@ function stepSummary(step: AgentStep) {
     return `${numberValue(output.key_findings)} findings, ${numberValue(output.suggested_experiments)} experiment ideas`;
   }
   return step.status === "running" ? "Running..." : "Completed.";
+}
+
+function fallbackSummary(step: AgentStep) {
+  const fallbacks = step.output_json?.fallbacks;
+  if (!Array.isArray(fallbacks) || fallbacks.length === 0) {
+    return null;
+  }
+  const first = fallbacks[0] as { component?: string; fallback?: string; reason?: string };
+  const extraCount = fallbacks.length > 1 ? ` + ${fallbacks.length - 1} more` : "";
+  return `Fallback used: ${first.component ?? "primary"} -> ${first.fallback ?? "fallback"}${extraCount}. ${first.reason ?? ""}`;
 }
 
 function countArray(value: unknown) {

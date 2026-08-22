@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.paper import AgentRun, AgentStep, utc_now
+from app.services.fallbacks import clear_fallback_events, pop_fallback_events
 
 
 def create_agent_run(db: Session, project_id: str, goal: str) -> AgentRun:
@@ -38,6 +39,7 @@ def set_agent_run_status(db: Session, run: AgentRun | None, status: str, error_m
 def start_agent_step(db: Session, run: AgentRun | None, tool_name: str, input_json: dict[str, Any] | None = None) -> AgentStep | None:
     if run is None:
         return None
+    clear_fallback_events()
     position = db.query(AgentStep).filter(AgentStep.run_id == run.id).count() + 1
     step = AgentStep(
         run_id=run.id,
@@ -57,6 +59,11 @@ def start_agent_step(db: Session, run: AgentRun | None, tool_name: str, input_js
 def complete_agent_step(db: Session, step: AgentStep | None, output_json: dict[str, Any] | None = None) -> None:
     if step is None:
         return
+    fallback_events = pop_fallback_events()
+    if fallback_events:
+        output_json = output_json or {}
+        output_json["fallback_used"] = True
+        output_json["fallbacks"] = fallback_events
     step.status = "completed"
     step.output_json = output_json
     step.finished_at = utc_now()
@@ -67,8 +74,11 @@ def complete_agent_step(db: Session, step: AgentStep | None, output_json: dict[s
 def fail_agent_step(db: Session, step: AgentStep | None, error: Exception) -> None:
     if step is None:
         return
+    fallback_events = pop_fallback_events()
     step.status = "failed"
     step.error_message = str(error)
+    if fallback_events:
+        step.output_json = {"fallback_used": True, "fallbacks": fallback_events}
     step.finished_at = utc_now()
     db.add(step)
     db.commit()

@@ -21,6 +21,7 @@ from app.services.agent_trace import (
 )
 from app.services.analysis import enqueue_analysis_job
 from app.services.arxiv import ArxivEntry, fetch_arxiv_entry, search_arxiv
+from app.services.fallbacks import record_fallback
 from app.services.papers import create_or_update_paper_from_arxiv
 from app.services.vector_store import get_vector_store
 
@@ -130,11 +131,13 @@ def select_recommended_candidates(db: Session, project_id: str, agent_run: Agent
         selection = get_ai_provider().select_relevant_candidates(project.question, candidate_payloads)
         selected_ids = {choice.arxiv_id for choice in selection.selected}
         rationales = {choice.arxiv_id: choice.rationale for choice in selection.selected}
-    except Exception:
+    except Exception as exc:
+        record_fallback("research.select_candidates", "top_3_by_score", str(exc), {"candidate_count": len(candidates)})
         selected_ids = {candidate.arxiv_id for candidate in candidates[:3]}
         rationales = {candidate.arxiv_id: "Selected as one of the highest-ranked candidates." for candidate in candidates[:3]}
 
     if not selected_ids:
+        record_fallback("research.select_candidates", "top_3_by_score", "LLM candidate selection returned no selected papers.", {"candidate_count": len(candidates)})
         selected_ids = {candidate.arxiv_id for candidate in candidates[:3]}
 
     for candidate in candidates:
@@ -455,7 +458,8 @@ def summarize_batch_papers(db: Session, paper_ids: list[str], goal: str) -> Batc
         raise HTTPException(status_code=400, detail="No analyzed paper evidence is available for batch summary")
     try:
         return get_ai_provider().summarize_batch(goal, contexts)
-    except Exception:
+    except Exception as exc:
+        record_fallback("research.summarize_batch", "mock.summarize_batch", str(exc), {"paper_count": len(contexts)})
         return MockProvider().summarize_batch(goal, contexts)
 
 
@@ -465,8 +469,9 @@ def select_context_chunks(db: Session, paper: Paper, query: str, limit: int) -> 
         chunks = get_vector_store().search_paper_chunks(db, paper.id, query_embedding, limit=limit)
         if chunks:
             return chunks
-    except Exception:
-        pass
+        record_fallback("research.select_context_chunks", "first_chunks", "Vector retrieval returned no chunks.", {"paper_id": paper.id, "limit": limit})
+    except Exception as exc:
+        record_fallback("research.select_context_chunks", "first_chunks", str(exc), {"paper_id": paper.id, "limit": limit})
     return first_chunks(paper, limit)
 
 

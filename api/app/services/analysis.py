@@ -9,6 +9,7 @@ from app.core.database import SessionLocal
 from app.models.paper import ChatMessage, ChatSession, Highlight, Job, Paper, PaperChunk, PaperSummary
 from app.schemas.paper import ChatMessageRead, ChatResponse
 from app.ai import get_ai_provider
+from app.services.fallbacks import clear_fallback_events, pop_fallback_events
 from app.services.pdf import chunk_pages, extract_pdf_pages
 from app.services.vector_store import get_vector_store
 
@@ -54,6 +55,7 @@ def process_analysis_job(job_id: str) -> None:
 
         pages = extract_pdf_pages(paper.pdf_path)
         chunks = chunk_pages(pages)
+        clear_fallback_events()
         provider = get_ai_provider()
         embeddings = provider.embed_texts([chunk["text"] for chunk in chunks]) if chunks else []
 
@@ -90,6 +92,7 @@ def process_analysis_job(job_id: str) -> None:
             for chunk in stored_chunks
         ]
         summary_payload = provider.generate_summary(paper.title, chunk_payload)
+        fallback_events = pop_fallback_events()
 
         db.add(
             PaperSummary(
@@ -117,6 +120,8 @@ def process_analysis_job(job_id: str) -> None:
 
         paper.status = "ready"
         job.status = "completed"
+        if fallback_events:
+            job.payload = {"fallback_used": True, "fallbacks": fallback_events}
         job.finished_at = now()
         db.add_all([paper, job])
         db.commit()
@@ -140,6 +145,7 @@ def process_analysis_job(job_id: str) -> None:
 
 def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: str) -> ChatResponse:
     history = [{"role": message.role, "content": message.content} for message in session.messages]
+    clear_fallback_events()
     provider = get_ai_provider()
     question_embedding = provider.embed_texts([question])[0]
     retrieved = get_vector_store().search_paper_chunks(db, paper.id, question_embedding, limit=4)
@@ -155,6 +161,12 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
         for chunk in retrieved
     ]
     answer_payload = provider.answer_question(paper.title, question, chunk_payload, history)
+    fallback_events = pop_fallback_events()
+    if fallback_events:
+        answer_payload.answer = (
+            "Fallback notice: part of this answer used a deterministic fallback because the primary path failed. "
+            f"Reason: {fallback_events[0]['reason']}\n\n{answer_payload.answer}"
+        )
 
     user_message = ChatMessage(session_id=session.id, role="user", content=question, citations=[])
     assistant_message = ChatMessage(
