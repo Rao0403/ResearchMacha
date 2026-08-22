@@ -1,9 +1,10 @@
 import pytest
 from fastapi import HTTPException
+from types import SimpleNamespace
 
 from app.ai import EvidenceCitation, MockProvider, PaperFinding, ResearchBrief, escape_template_text
 from app.services.arxiv import ARXIV_API, ArxivEntry, build_search_query
-from app.services.research import ensure_cited_brief, score_candidate
+from app.services.research import apply_memory_bias, ensure_cited_brief, infer_preference_profile, score_candidate
 
 
 def test_mock_provider_plans_research_question() -> None:
@@ -123,3 +124,39 @@ def test_mock_batch_summary_contains_required_fields() -> None:
     assert summary.papers[0].models_and_datasets
     assert summary.papers[0].results
     assert summary.papers[0].conclusions
+
+
+def test_memory_bias_adjusts_candidate_scores() -> None:
+    candidates = [
+        {"arxiv_id": "preferred", "title": "Retrieval augmented generation for factuality", "abstract": "RAG evaluation", "score": 70},
+        {"arxiv_id": "rejected", "title": "Graph coloring local search", "abstract": "Combinatorial optimization", "score": 70},
+    ]
+    memories = [
+        {"memory_type": "preference", "text": "User prefers retrieval augmented generation and factuality work.", "metadata_json": {}},
+        {"memory_type": "rejected_paper", "text": "Rejected paper", "metadata_json": {"title": "Graph coloring", "rationale": "Weak match"}},
+    ]
+
+    adjusted = apply_memory_bias(candidates, memories)
+
+    assert adjusted[0]["arxiv_id"] == "preferred"
+    assert adjusted[0]["score"] > adjusted[0]["base_score"]
+    assert next(candidate for candidate in adjusted if candidate["arxiv_id"] == "rejected")["score"] < 70
+
+
+def test_preference_profile_contains_domains_methods_datasets_and_recency() -> None:
+    profile = infer_preference_profile(
+        "recent RAG methods for reducing hallucinations",
+        [
+            SimpleNamespace(
+                title="Retrieval Augmented Generation on NaturalQuestions",
+                abstract="The method evaluates RAG on NaturalQuestions and FEVER.",
+                year=2024,
+                arxiv_id="2401.00001",
+            )
+        ],
+    )
+
+    assert profile["domains"]
+    assert "rag" in profile["methods"]
+    assert "NaturalQuestions" in profile["datasets"]
+    assert profile["recency_preference"] == "explicit_recent"

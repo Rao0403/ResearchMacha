@@ -53,6 +53,34 @@ def create_memory(
     return memory
 
 
+def create_paper_fact_memory(
+    db: Session,
+    *,
+    paper_id: str,
+    title: str,
+    sections: dict[str, str],
+) -> ResearchMemory:
+    text = (
+        f"Paper fact memory for {title}. "
+        f"Problem or hypothesis: {sections.get('problem_or_hypothesis', 'Unknown')}. "
+        f"Approach: {sections.get('approach', 'Unknown')}. "
+        f"Experiments: {sections.get('experiments', 'Unknown')}. "
+        f"Results: {sections.get('results', 'Unknown')}. "
+        f"Conclusion: {sections.get('conclusion', 'Unknown')}. "
+        f"Limitations: {sections.get('limitations_or_notes', 'Unknown')}."
+    )
+    return create_memory(
+        db,
+        scope="paper",
+        memory_type="paper_fact",
+        text=text,
+        paper_id=paper_id,
+        metadata_json={"title": title, "sections": sections},
+        importance=2,
+        source="analysis",
+    )
+
+
 def index_memories(memories: list[ResearchMemory]) -> None:
     if not memories:
         return

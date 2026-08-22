@@ -105,13 +105,23 @@ class AIProvider:
     def plan_research(self, question: str) -> ResearchPlan:
         raise NotImplementedError
 
-    def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
+    def select_relevant_candidates(
+        self,
+        question: str,
+        candidates: list[dict[str, Any]],
+        memory_context: list[dict[str, Any]] | None = None,
+    ) -> CandidateSelection:
         raise NotImplementedError
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
         raise NotImplementedError
 
-    def synthesize_collection(self, question: str, paper_contexts: list[dict[str, Any]]) -> ResearchBrief:
+    def synthesize_collection(
+        self,
+        question: str,
+        paper_contexts: list[dict[str, Any]],
+        memory_context: list[dict[str, Any]] | None = None,
+    ) -> ResearchBrief:
         raise NotImplementedError
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
@@ -146,7 +156,12 @@ class MockProvider(AIProvider):
             ],
         )
 
-    def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
+    def select_relevant_candidates(
+        self,
+        question: str,
+        candidates: list[dict[str, Any]],
+        memory_context: list[dict[str, Any]] | None = None,
+    ) -> CandidateSelection:
         ranked = sorted(candidates, key=lambda candidate: candidate.get("score", 0), reverse=True)[:3]
         return CandidateSelection(
             selected=[
@@ -195,7 +210,12 @@ class MockProvider(AIProvider):
 
         return SummaryPayload(sections=sections, section_citations=section_citations, highlights=highlights)
 
-    def synthesize_collection(self, question: str, paper_contexts: list[dict[str, Any]]) -> ResearchBrief:
+    def synthesize_collection(
+        self,
+        question: str,
+        paper_contexts: list[dict[str, Any]],
+        memory_context: list[dict[str, Any]] | None = None,
+    ) -> ResearchBrief:
         findings = []
         for index, context in enumerate(paper_contexts[:5]):
             citation = first_context_citation(context)
@@ -312,18 +332,23 @@ class LangChainProvider(MockProvider):
             record_fallback("ai.plan_research", "mock.plan_research", str(exc))
             return super().plan_research(question)
 
-    def select_relevant_candidates(self, question: str, candidates: list[dict[str, Any]]) -> CandidateSelection:
+    def select_relevant_candidates(
+        self,
+        question: str,
+        candidates: list[dict[str, Any]],
+        memory_context: list[dict[str, Any]] | None = None,
+    ) -> CandidateSelection:
         try:
             return invoke_structured_json(
                 self.chat_model,
                 CandidateSelection,
-                "Select the 3 to 5 most relevant arXiv candidates for the research question.",
-                "Question: {question}\nCandidates:\n{candidates}",
-                {"question": question, "candidates": format_candidates(candidates)},
+                "Select the 3 to 5 most relevant arXiv candidates for the research question. Use memory as a weak preference signal, but do not select irrelevant papers just because memory mentions related terms.",
+                "Question: {question}\nMemory signals:\n{memory_context}\nCandidates:\n{candidates}",
+                {"question": question, "memory_context": format_memories(memory_context or []), "candidates": format_candidates(candidates)},
             )
         except Exception as exc:
             record_fallback("ai.select_relevant_candidates", "mock.select_relevant_candidates", str(exc), {"candidate_count": len(candidates)})
-            return super().select_relevant_candidates(question, candidates)
+            return super().select_relevant_candidates(question, candidates, memory_context)
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
         try:
@@ -343,18 +368,23 @@ class LangChainProvider(MockProvider):
             record_fallback("ai.generate_summary", "mock.generate_summary", str(exc), {"chunk_count": len(chunks), "paper_title": paper_title})
             return super().generate_summary(paper_title, chunks)
 
-    def synthesize_collection(self, question: str, paper_contexts: list[dict[str, Any]]) -> ResearchBrief:
+    def synthesize_collection(
+        self,
+        question: str,
+        paper_contexts: list[dict[str, Any]],
+        memory_context: list[dict[str, Any]] | None = None,
+    ) -> ResearchBrief:
         try:
             return invoke_structured_json(
                 self.chat_model,
                 ResearchBrief,
-                "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence.",
-                "Question: {question}\nPaper evidence:\n{context}",
-                {"question": question, "context": format_paper_contexts(paper_contexts)},
+                "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence. Use memory only to prioritize emphasis; do not cite memory as evidence.",
+                "Question: {question}\nMemory signals:\n{memory_context}\nPaper evidence:\n{context}",
+                {"question": question, "memory_context": format_memories(memory_context or []), "context": format_paper_contexts(paper_contexts)},
             )
         except Exception as exc:
             record_fallback("ai.synthesize_collection", "mock.synthesize_collection", str(exc), {"paper_count": len(paper_contexts)})
-            return super().synthesize_collection(question, paper_contexts)
+            return super().synthesize_collection(question, paper_contexts, memory_context)
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
         try:
@@ -610,10 +640,24 @@ def format_candidates(candidates: list[dict[str, Any]]) -> str:
             f"title={candidate['title']}\n"
             f"year={candidate.get('year')}\n"
             f"score={candidate.get('score')}\n"
+            f"base_score={candidate.get('base_score', candidate.get('score'))}\n"
+            f"memory_signal={candidate.get('memory_signal', 'none')}\n"
             f"rationale={candidate.get('rationale')}\n"
             f"abstract={candidate.get('abstract', '')[:900]}"
         )
         for candidate in candidates[:12]
+    )
+
+
+def format_memories(memories: list[dict[str, Any]]) -> str:
+    if not memories:
+        return "No prior memory signals."
+    return "\n".join(
+        (
+            f"- scope={memory.get('scope')} type={memory.get('memory_type')} "
+            f"importance={memory.get('importance', 1)} text={str(memory.get('text', ''))[:600]}"
+        )
+        for memory in memories[:8]
     )
 
 

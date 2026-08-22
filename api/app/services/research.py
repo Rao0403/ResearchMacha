@@ -22,6 +22,7 @@ from app.services.agent_trace import (
 from app.services.analysis import enqueue_analysis_job
 from app.services.arxiv import ArxivEntry, fetch_arxiv_entry, search_arxiv
 from app.services.fallbacks import record_fallback
+from app.services.memory import create_memory, memory_payload, retrieve_memories
 from app.services.papers import create_or_update_paper_from_arxiv
 from app.services.vector_store import get_vector_store
 
@@ -112,11 +113,17 @@ def select_recommended_candidates(db: Session, project_id: str, agent_run: Agent
         .order_by(ResearchCandidate.score.desc())
         .all()
     )
+    memory_signals = retrieve_memories(db, project.question, limit=6)
+    memory_payloads = [memory_payload(memory) for memory in memory_signals]
     step = start_agent_step(
         db,
         agent_run,
         "select_candidates",
-        {"candidate_count": len(candidates), "question": project.question},
+        {
+            "candidate_count": len(candidates),
+            "question": project.question,
+            "memory_count": len(memory_payloads),
+        },
     )
     if not candidates:
         project.status = "no_candidates"
@@ -125,20 +132,20 @@ def select_recommended_candidates(db: Session, project_id: str, agent_run: Agent
         complete_agent_step(db, step, {"selected_count": 0, "status": project.status})
         return get_project_or_404(db, project_id)
 
-    candidate_payloads = [candidate_to_payload(candidate) for candidate in candidates]
+    candidate_payloads = apply_memory_bias([candidate_to_payload(candidate) for candidate in candidates], memory_payloads)
 
     try:
-        selection = get_ai_provider().select_relevant_candidates(project.question, candidate_payloads)
+        selection = get_ai_provider().select_relevant_candidates(project.question, candidate_payloads, memory_payloads)
         selected_ids = {choice.arxiv_id for choice in selection.selected}
         rationales = {choice.arxiv_id: choice.rationale for choice in selection.selected}
     except Exception as exc:
         record_fallback("research.select_candidates", "top_3_by_score", str(exc), {"candidate_count": len(candidates)})
-        selected_ids = {candidate.arxiv_id for candidate in candidates[:3]}
-        rationales = {candidate.arxiv_id: "Selected as one of the highest-ranked candidates." for candidate in candidates[:3]}
+        selected_ids = fallback_selected_arxiv_ids(candidate_payloads)
+        rationales = {arxiv_id: "Selected by memory-adjusted deterministic ranking." for arxiv_id in selected_ids}
 
     if not selected_ids:
         record_fallback("research.select_candidates", "top_3_by_score", "LLM candidate selection returned no selected papers.", {"candidate_count": len(candidates)})
-        selected_ids = {candidate.arxiv_id for candidate in candidates[:3]}
+        selected_ids = fallback_selected_arxiv_ids(candidate_payloads)
 
     for candidate in candidates:
         candidate.selected = candidate.arxiv_id in selected_ids
@@ -156,6 +163,17 @@ def select_recommended_candidates(db: Session, project_id: str, agent_run: Agent
             "selected_count": sum(1 for candidate in candidates if candidate.selected),
             "selected_arxiv_ids": [candidate.arxiv_id for candidate in candidates if candidate.selected],
             "top_candidates": summarize_candidates_for_trace(candidates),
+            "memory_count": len(memory_payloads),
+            "memory_adjusted_candidates": [
+                {
+                    "arxiv_id": candidate["arxiv_id"],
+                    "base_score": candidate.get("base_score", candidate.get("score")),
+                    "score": candidate.get("score"),
+                    "memory_signal": candidate.get("memory_signal"),
+                }
+                for candidate in candidate_payloads
+                if candidate.get("memory_signal")
+            ],
             "status": project.status,
         },
     )
@@ -327,10 +345,13 @@ def approve_research_workflow(
     background_tasks: BackgroundTasks,
 ) -> ResearchProject:
     agent_run = latest_agent_run(db, project_id) or create_agent_run(db, project_id, f"Approve papers for project {project_id}")
+    existing_project = get_project_or_404(db, project_id)
+    effective_candidate_ids = candidate_ids or [candidate.id for candidate in existing_project.candidates if candidate.selected]
     project = import_selected_candidates(db, project_id, candidate_ids, background_tasks, agent_run)
     project.status = "analyzing"
     db.add(project)
     db.commit()
+    remember_candidate_decisions(db, project_id, effective_candidate_ids)
     set_agent_run_status(db, agent_run, project.status)
     return get_project_or_404(db, project_id)
 
@@ -369,6 +390,8 @@ def synthesize_project(db: Session, project_id: str, agent_run: AgentRun | None 
     if not contexts:
         raise HTTPException(status_code=400, detail="No analyzed paper evidence is available for synthesis")
 
+    memory_signals = retrieve_memories(db, project.question, limit=8)
+    memory_payloads = [memory_payload(memory) for memory in memory_signals]
     step = start_agent_step(
         db,
         agent_run,
@@ -377,10 +400,11 @@ def synthesize_project(db: Session, project_id: str, agent_run: AgentRun | None 
             "paper_count": len(contexts),
             "chunk_counts": [len(context.get("chunks", [])) for context in contexts],
             "question": project.question,
+            "memory_count": len(memory_payloads),
         },
     )
     try:
-        brief = get_ai_provider().synthesize_collection(project.question, contexts)
+        brief = get_ai_provider().synthesize_collection(project.question, contexts, memory_payloads)
         ensure_cited_brief(brief)
     except Exception as exc:
         fail_agent_step(db, step, exc)
@@ -398,6 +422,7 @@ def synthesize_project(db: Session, project_id: str, agent_run: AgentRun | None 
             "evidence_rows": len(brief.evidence_table),
             "suggested_experiments": len(brief.suggested_experiments),
             "suggested_research_directions": len(brief.suggested_research_directions),
+            "memory_count": len(memory_payloads),
             "status": project.status,
         },
     )
@@ -517,6 +542,48 @@ def candidate_to_payload(candidate: ResearchCandidate) -> dict[str, Any]:
     }
 
 
+def apply_memory_bias(candidates: list[dict[str, Any]], memories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    positive_terms, negative_terms = memory_term_sets(memories)
+    adjusted_candidates = []
+    for candidate in candidates:
+        adjusted = dict(candidate)
+        candidate_terms = keyword_set(f"{candidate.get('title', '')} {candidate.get('abstract', '')}")
+        positive_hits = sorted(candidate_terms & positive_terms)
+        negative_hits = sorted(candidate_terms & negative_terms)
+        score_adjustment = min(12, len(positive_hits) * 3) - min(12, len(negative_hits) * 4)
+        adjusted["base_score"] = candidate.get("score", 0)
+        adjusted["score"] = max(0, min(100, int(candidate.get("score", 0)) + score_adjustment))
+        if score_adjustment:
+            signal_parts = []
+            if positive_hits:
+                signal_parts.append(f"positive: {', '.join(positive_hits[:5])}")
+            if negative_hits:
+                signal_parts.append(f"negative: {', '.join(negative_hits[:5])}")
+            adjusted["memory_signal"] = "; ".join(signal_parts)
+        adjusted_candidates.append(adjusted)
+    return sorted(adjusted_candidates, key=lambda candidate: candidate.get("score", 0), reverse=True)
+
+
+def memory_term_sets(memories: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
+    positive_terms: set[str] = set()
+    negative_terms: set[str] = set()
+    for memory in memories:
+        metadata = memory.get("metadata_json") or {}
+        term_source = str(memory.get("text") or "")
+        if memory.get("memory_type") == "rejected_paper":
+            term_source = f"{metadata.get('title', '')} {metadata.get('rationale', '')}"
+        terms = keyword_set(term_source)
+        if memory.get("memory_type") == "rejected_paper":
+            negative_terms.update(terms)
+        else:
+            positive_terms.update(terms)
+    return positive_terms, negative_terms
+
+
+def fallback_selected_arxiv_ids(candidates: list[dict[str, Any]]) -> set[str]:
+    return {candidate["arxiv_id"] for candidate in sorted(candidates, key=lambda item: item.get("score", 0), reverse=True)[:3]}
+
+
 def ensure_cited_brief(brief: ResearchBrief) -> None:
     sections = [
         *brief.key_findings,
@@ -545,6 +612,146 @@ def score_candidate(question: str, entry: ArxivEntry) -> tuple[int, str]:
 def keyword_set(text: str) -> set[str]:
     stopwords = {"the", "and", "for", "with", "from", "that", "this", "into", "how", "can", "are", "using"}
     return {token for token in re.findall(r"[a-z0-9]+", text.lower()) if len(token) > 2 and token not in stopwords}
+
+
+def remember_candidate_decisions(db: Session, project_id: str, approved_candidate_ids: list[str]) -> None:
+    approved_ids = set(approved_candidate_ids)
+    if not approved_ids:
+        return
+
+    try:
+        project = get_project_or_404(db, project_id)
+        candidates = sorted(project.candidates, key=lambda candidate: candidate.score, reverse=True)
+        selected_candidates = [candidate for candidate in candidates if candidate.id in approved_ids]
+        for candidate in candidates:
+            accepted = candidate.id in approved_ids
+            decision = "accepted" if accepted else "rejected"
+            create_memory(
+                db,
+                scope="project",
+                memory_type=f"{decision}_paper",
+                text=(
+                    f"{decision.title()} paper for research question '{project.question}': {candidate.title}. "
+                    f"Rationale: {candidate.rationale}"
+                ),
+                project_id=project.id,
+                metadata_json={
+                    "decision": decision,
+                    "candidate_id": candidate.id,
+                    "arxiv_id": candidate.arxiv_id,
+                    "title": candidate.title,
+                    "score": candidate.score,
+                    "rationale": candidate.rationale,
+                    "year": candidate.year,
+                },
+                importance=3 if accepted else 2,
+                source="approval",
+            )
+
+        if selected_candidates:
+            profile = infer_preference_profile(project.question, selected_candidates)
+            create_memory(
+                db,
+                scope="user",
+                memory_type="preference",
+                text=(
+                    "User preference inferred from approved research papers. "
+                    f"Domains: {', '.join(profile['domains']) or 'unspecified'}. "
+                    f"Methods: {', '.join(profile['methods']) or 'unspecified'}. "
+                    f"Datasets: {', '.join(profile['datasets']) or 'unspecified'}. "
+                    f"Recency preference: {profile['recency_preference']}. "
+                    f"Keywords: {', '.join(profile['keywords'][:10])}. "
+                    f"Accepted papers: {', '.join(candidate.title for candidate in selected_candidates[:4])}."
+                ),
+                project_id=project.id,
+                metadata_json=profile,
+                importance=3,
+                source="approval",
+            )
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        record_fallback("memory.candidate_decisions", "skip_memory_write", str(exc), {"project_id": project_id})
+
+
+def infer_preference_profile(question: str, candidates: list[ResearchCandidate]) -> dict[str, Any]:
+    combined = " ".join([question, *[candidate.title for candidate in candidates], *[candidate.abstract for candidate in candidates]])
+    terms = keyword_set(combined)
+    years = [candidate.year for candidate in candidates if candidate.year]
+    return {
+        "domains": infer_domains(terms),
+        "methods": sorted(terms & METHOD_TERMS)[:10],
+        "datasets": infer_datasets(combined),
+        "recency_preference": infer_recency_preference(question, years),
+        "keywords": sorted(terms)[:20],
+        "accepted_arxiv_ids": [candidate.arxiv_id for candidate in candidates],
+        "accepted_titles": [candidate.title for candidate in candidates],
+        "year_range": [min(years), max(years)] if years else None,
+    }
+
+
+def infer_domains(terms: set[str]) -> list[str]:
+    domains = []
+    if terms & {"rag", "retrieval", "language", "llm", "nlp", "question", "answering", "summarization"}:
+        domains.append("natural language processing")
+    if terms & {"vision", "image", "visual", "diffusion", "segmentation", "detection"}:
+        domains.append("computer vision")
+    if terms & {"clinical", "medical", "health", "biomedical", "ehr"}:
+        domains.append("healthcare ai")
+    if terms & {"robot", "robotics", "control", "planning"}:
+        domains.append("robotics")
+    if terms & {"graph", "network", "node", "edge"}:
+        domains.append("graph learning")
+    return domains or ["general ai research"]
+
+
+def infer_datasets(text: str) -> list[str]:
+    blocked = {"The", "This", "These", "They", "Abstract", "Introduction", "Results", "Conclusion"}
+    candidates = re.findall(r"\b[A-Z][A-Za-z0-9_-]{2,}\b", text)
+    datasets = []
+    for candidate in candidates:
+        if candidate in blocked or candidate.lower() in keyword_set(" ".join(blocked)):
+            continue
+        if candidate not in datasets:
+            datasets.append(candidate)
+    return datasets[:10]
+
+
+def infer_recency_preference(question: str, years: list[int]) -> str:
+    question_terms = keyword_set(question)
+    if question_terms & {"recent", "latest", "new", "current", "modern"}:
+        return "explicit_recent"
+    if years and min(years) >= 2020:
+        return "recent"
+    if years and max(years) < 2020:
+        return "foundational_or_older"
+    return "mixed_or_unspecified"
+
+
+METHOD_TERMS = {
+    "ablation",
+    "agent",
+    "alignment",
+    "benchmark",
+    "chain",
+    "contrastive",
+    "diffusion",
+    "embedding",
+    "evaluation",
+    "finetuning",
+    "generation",
+    "graph",
+    "hallucination",
+    "language",
+    "llm",
+    "memory",
+    "prompting",
+    "rag",
+    "ranking",
+    "reasoning",
+    "retrieval",
+    "rlhf",
+    "transformer",
+}
 
 
 def seed_demo_project(db: Session) -> ResearchProject:

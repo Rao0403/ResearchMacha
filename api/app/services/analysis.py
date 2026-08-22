@@ -9,7 +9,8 @@ from app.core.database import SessionLocal
 from app.models.paper import ChatMessage, ChatSession, Highlight, Job, Paper, PaperChunk, PaperSummary
 from app.schemas.paper import ChatMessageRead, ChatResponse
 from app.ai import get_ai_provider
-from app.services.fallbacks import clear_fallback_events, pop_fallback_events
+from app.services.fallbacks import clear_fallback_events, pop_fallback_events, record_fallback
+from app.services.memory import create_paper_fact_memory
 from app.services.pdf import chunk_pages, extract_pdf_pages
 from app.services.vector_store import get_vector_store
 
@@ -125,6 +126,21 @@ def process_analysis_job(job_id: str) -> None:
         job.finished_at = now()
         db.add_all([paper, job])
         db.commit()
+        try:
+            create_paper_fact_memory(db, paper_id=paper.id, title=paper.title, sections=summary_payload.sections)
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            record_fallback("memory.paper_fact", "skip_memory_write", str(exc), {"paper_id": paper.id})
+        memory_fallback_events = pop_fallback_events()
+        if memory_fallback_events:
+            job = db.get(Job, job_id)
+            if job is not None:
+                payload = dict(job.payload or {})
+                payload["fallback_used"] = True
+                payload["fallbacks"] = [*(payload.get("fallbacks") or []), *memory_fallback_events]
+                job.payload = payload
+                db.add(job)
+                db.commit()
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         job = db.get(Job, job_id)
