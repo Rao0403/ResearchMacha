@@ -35,6 +35,17 @@ def test_vector_store_fallback_uses_mysql_when_primary_fails() -> None:
     assert results[0].id == "high"
 
 
+def test_mysql_vector_store_returns_top_matching_memories() -> None:
+    memories = [
+        SimpleNamespace(id="low", scope="user", status="active", importance=1, embedding=[0.0, 1.0]),
+        SimpleNamespace(id="high", scope="user", status="active", importance=1, embedding=[1.0, 0.0]),
+    ]
+
+    results = MySQLVectorStore().search_memories(FakeDb(memories), [1.0, 0.0], scope="user", limit=1)
+
+    assert results[0].id == "high"
+
+
 class FakeQuery:
     def __init__(self, chunks):
         self.chunks = chunks
@@ -67,4 +78,13 @@ class FailingVectorStore:
         raise RuntimeError("primary unavailable")
 
     def search_paper_chunks(self, db, paper_id, query_embedding, limit=4):
+        raise RuntimeError("primary unavailable")
+
+    def upsert_memories(self, memories):
+        raise RuntimeError("primary unavailable")
+
+    def delete_memory(self, memory_id):
+        raise RuntimeError("primary unavailable")
+
+    def search_memories(self, db, query_embedding, scope=None, limit=5):
         raise RuntimeError("primary unavailable")

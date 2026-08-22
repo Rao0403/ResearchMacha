@@ -39,6 +39,7 @@ class Paper(Base):
     chat_sessions: Mapped[list["ChatSession"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
     jobs: Mapped[list["Job"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
     project_links: Mapped[list["ResearchProjectPaper"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
+    memories: Mapped[list["ResearchMemory"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
 
 
 class Job(Base):
@@ -147,6 +148,7 @@ class ResearchProject(Base):
     candidates: Mapped[list["ResearchCandidate"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     papers: Mapped[list["ResearchProjectPaper"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     agent_runs: Mapped[list["AgentRun"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    memories: Mapped[list["ResearchMemory"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
 class ResearchCandidate(Base):
@@ -180,6 +182,27 @@ class ResearchProjectPaper(Base):
 
     project: Mapped[ResearchProject] = relationship(back_populates="papers")
     paper: Mapped[Paper] = relationship(back_populates="project_links")
+
+
+class ResearchMemory(Base):
+    __tablename__ = "research_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
+    scope: Mapped[str] = mapped_column(String(32), index=True)
+    memory_type: Mapped[str] = mapped_column(String(64), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    importance: Mapped[int] = mapped_column(Integer, default=1)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(64), default="system")
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+    project: Mapped[ResearchProject | None] = relationship(back_populates="memories")
+    paper: Mapped[Paper | None] = relationship(back_populates="memories")
 
 
 class AgentRun(Base):

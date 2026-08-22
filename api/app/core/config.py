@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
     qdrant_collection: str = "research_macha_chunks"
+    qdrant_memory_collection: str = "research_macha_memories"
     qdrant_vector_size: int | None = None
 
     ai_provider: str = "mock"
