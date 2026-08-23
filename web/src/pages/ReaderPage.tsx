@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { PdfViewer } from "../components/PdfViewer";
@@ -36,6 +36,8 @@ export function ReaderPage() {
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [targetPage, setTargetPage] = useState<number | null>(null);
+  const pdfSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (routePaperId) {
@@ -61,6 +63,7 @@ export function ReaderPage() {
       const nextPaper = await getPaper(paperId);
       setPaper(nextPaper);
       setCurrentPage(1);
+      setTargetPage(null);
       if (nextPaper.status === "ready") {
         await loadSummary(nextPaper.id);
       } else if (!quiet) {
@@ -148,6 +151,12 @@ export function ReaderPage() {
     }
   }
 
+  function jumpToCitation(page: number) {
+    setTargetPage(null);
+    window.setTimeout(() => setTargetPage(page), 0);
+    pdfSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
     <div className="mvp-page reader-page">
       <section className="mvp-header">
@@ -169,7 +178,7 @@ export function ReaderPage() {
       {message ? <p className="status-note">{message}</p> : null}
 
       <div className="reader-grid">
-        <section className="pdf-workspace">
+        <section className="pdf-workspace" ref={pdfSectionRef}>
           {paper ? (
             <>
               <div className="reader-title-row">
@@ -185,7 +194,7 @@ export function ReaderPage() {
                   </a>
                 </div>
               </div>
-              <PdfViewer title={paper.title} url={getPdfUrl(paper.id)} onPageChange={setCurrentPage} />
+              <PdfViewer title={paper.title} url={getPdfUrl(paper.id)} targetPage={targetPage} onPageChange={setCurrentPage} />
             </>
           ) : (
             <div className="empty-state">
@@ -207,8 +216,12 @@ export function ReaderPage() {
             </button>
           </div>
 
-          {activeTab === "notes" ? <NotesPanel summary={summaryPayload?.summary ?? paper?.summary ?? null} /> : null}
-          {activeTab === "highlights" ? <HighlightsPanel highlights={summaryPayload?.highlights ?? paper?.highlights ?? []} /> : null}
+          {activeTab === "notes" ? (
+            <NotesPanel summary={summaryPayload?.summary ?? paper?.summary ?? null} onCitationClick={jumpToCitation} />
+          ) : null}
+          {activeTab === "highlights" ? (
+            <HighlightsPanel highlights={summaryPayload?.highlights ?? paper?.highlights ?? []} onCitationClick={jumpToCitation} />
+          ) : null}
           {activeTab === "chat" ? (
             <ChatPanel
               disabled={!paper}
@@ -217,6 +230,7 @@ export function ReaderPage() {
               sending={sending}
               onQuestionChange={setQuestion}
               onSubmit={handleChat}
+              onCitationClick={jumpToCitation}
             />
           ) : null}
         </aside>
@@ -225,7 +239,7 @@ export function ReaderPage() {
   );
 }
 
-function NotesPanel({ summary }: { summary: PaperSummary | null }) {
+function NotesPanel({ summary, onCitationClick }: { summary: PaperSummary | null; onCitationClick: (page: number) => void }) {
   if (!summary) {
     return <p className="status-note">Notes are generated after paper analysis finishes.</p>;
   }
@@ -238,9 +252,7 @@ function NotesPanel({ summary }: { summary: PaperSummary | null }) {
           <p>{summary[key]}</p>
           <div className="citation-row">
             {(summary.section_citations[key] ?? []).map((citation, index) => (
-              <span className="citation-chip" key={`${key}-${index}`}>
-                p.{citation.page}
-              </span>
+              <CitationButton citation={citation} key={`${key}-${index}`} onClick={onCitationClick} />
             ))}
           </div>
         </section>
@@ -249,7 +261,7 @@ function NotesPanel({ summary }: { summary: PaperSummary | null }) {
   );
 }
 
-function HighlightsPanel({ highlights }: { highlights: Highlight[] }) {
+function HighlightsPanel({ highlights, onCitationClick }: { highlights: Highlight[]; onCitationClick: (page: number) => void }) {
   if (!highlights.length) {
     return <p className="status-note">Highlights are generated after paper analysis finishes.</p>;
   }
@@ -261,10 +273,15 @@ function HighlightsPanel({ highlights }: { highlights: Highlight[] }) {
           <h4>{highlight.label}</h4>
           <p>{highlight.explanation}</p>
           {highlight.citations.map((citation, index) => (
-            <blockquote key={`${highlight.id}-${index}`}>
+            <button
+              type="button"
+              className="highlight-citation-button"
+              key={`${highlight.id}-${index}`}
+              onClick={() => onCitationClick(citation.page)}
+            >
               <strong>Page {citation.page}</strong>
               <span>{citation.excerpt}</span>
-            </blockquote>
+            </button>
           ))}
         </section>
       ))}
@@ -279,6 +296,7 @@ function ChatPanel({
   sending,
   onQuestionChange,
   onSubmit,
+  onCitationClick,
 }: {
   disabled: boolean;
   messages: ChatMessage[];
@@ -286,6 +304,7 @@ function ChatPanel({
   sending: boolean;
   onQuestionChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
+  onCitationClick: (page: number) => void;
 }) {
   return (
     <div className="reader-chat">
@@ -295,9 +314,7 @@ function ChatPanel({
             <p>{message.content}</p>
             <div className="citation-row">
               {message.citations.map((citation, index) => (
-                <span className="citation-chip" key={`${message.id}-${index}`}>
-                  p.{citation.page}
-                </span>
+                <CitationButton citation={citation} key={`${message.id}-${index}`} onClick={onCitationClick} />
               ))}
             </div>
           </article>
@@ -315,6 +332,19 @@ function ChatPanel({
         <button type="submit" disabled={disabled || sending}>{sending ? "Asking..." : "Ask"}</button>
       </form>
     </div>
+  );
+}
+
+function CitationButton({ citation, onClick }: { citation: { page: number; excerpt?: string }; onClick: (page: number) => void }) {
+  return (
+    <button
+      type="button"
+      className="citation-chip citation-button"
+      title={citation.excerpt ? `Jump to page ${citation.page}: ${citation.excerpt}` : `Jump to page ${citation.page}`}
+      onClick={() => onClick(citation.page)}
+    >
+      p.{citation.page}
+    </button>
   );
 }
 

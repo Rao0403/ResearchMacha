@@ -558,6 +558,19 @@ textarea {
   color: var(--accent);
 }
 
+.citation-button {
+  border: 1px solid transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.citation-button:hover {
+  border-color: rgba(164, 79, 42, 0.28);
+  background: rgba(164, 79, 42, 0.18);
+  color: var(--accent);
+  transform: none;
+}
+
 .status-pending,
 .status-queued,
 .status-processing {
@@ -1139,6 +1152,30 @@ textarea {
   border-left: 3px solid var(--accent);
   padding-left: 0.8rem;
   color: var(--muted);
+}
+
+.highlight-citation-button {
+  display: grid;
+  width: 100%;
+  justify-content: stretch;
+  gap: 0.35rem;
+  margin: 0.7rem 0 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 0.55rem 0.8rem;
+  background: rgba(164, 79, 42, 0.05);
+  color: var(--muted);
+  text-align: left;
+}
+
+.highlight-citation-button:hover {
+  background: rgba(164, 79, 42, 0.1);
+  color: var(--text);
+  transform: none;
+}
+
+.highlight-citation-button strong {
+  color: var(--accent);
 }
 
 .empty-state {
