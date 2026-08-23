@@ -110,6 +110,8 @@ export function ResearchWorkflowPage() {
 
       <StatusTrack status={project?.status} busy={submitting} />
       {message ? <p className="status-note">{message}</p> : null}
+      {submitting ? <AgentLoadingState /> : null}
+      {project ? <WorkflowStats project={project} selectedCount={selected.size} /> : null}
 
       {project?.agent_run ? <AgentTrace run={project.agent_run} /> : null}
       {project?.memory_signals?.length ? <MemorySignals memories={project.memory_signals} /> : null}
@@ -175,6 +177,56 @@ export function ResearchWorkflowPage() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+function AgentLoadingState() {
+  return (
+    <section className="mvp-panel loading-workbench">
+      <div>
+        <p className="eyebrow">Agent running</p>
+        <h3>Planning search, querying arXiv, and selecting candidates...</h3>
+      </div>
+      <div className="loading-steps" aria-label="Research workflow loading steps">
+        <span>Plan search</span>
+        <span>Find papers</span>
+        <span>Rank evidence</span>
+        <span>Select shortlist</span>
+      </div>
+    </section>
+  );
+}
+
+function WorkflowStats({ project, selectedCount }: { project: ResearchProject; selectedCount: number }) {
+  const readyPapers = project.papers.filter((paper) => paper.status === "ready").length;
+  const failedPapers = project.papers.filter((paper) => paper.status === "failed").length;
+  return (
+    <section className="workflow-stats" aria-label="Research workflow snapshot">
+      <span>
+        <strong>{project.candidates.length}</strong>
+        candidates
+      </span>
+      <span>
+        <strong>{selectedCount}</strong>
+        selected
+      </span>
+      <span>
+        <strong>{project.papers.length}</strong>
+        imported
+      </span>
+      <span>
+        <strong>{readyPapers}</strong>
+        ready
+      </span>
+      <span>
+        <strong>{failedPapers}</strong>
+        failed
+      </span>
+      <span>
+        <strong>{project.memory_signals?.length ?? 0}</strong>
+        memory signals
+      </span>
+    </section>
   );
 }
 

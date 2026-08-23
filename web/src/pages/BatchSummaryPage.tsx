@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { batchUploadPapers, createBatchSummary, getPaper } from "../lib/api";
+import { analyzePaper, batchUploadPapers, createBatchSummary, getPaper } from "../lib/api";
 import type { BatchSummaryResponse, LibraryPaper } from "../types";
 
 export function BatchSummaryPage() {
@@ -10,6 +10,7 @@ export function BatchSummaryPage() {
   const [goal, setGoal] = useState("Extract the main ideas, hypothesis, experiments, models, datasets, results, and conclusions.");
   const [uploading, setUploading] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -75,6 +76,50 @@ export function BatchSummaryPage() {
     }
   }
 
+  async function retryPaperAnalysis(paperId: string) {
+    setRetryingIds((current) => new Set(current).add(paperId));
+    setMessage(null);
+    setSummary(null);
+    try {
+      await analyzePaper(paperId);
+      const updated = await getPaper(paperId);
+      setPapers((current) => current.map((paper) => (paper.id === paperId ? updated : paper)));
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setRetryingIds((current) => {
+        const next = new Set(current);
+        next.delete(paperId);
+        return next;
+      });
+    }
+  }
+
+  function exportCsv() {
+    if (!summary) {
+      return;
+    }
+    const rows = [
+      ["Paper", "Main idea", "Problem / hypothesis", "Experiments", "Models / datasets", "Results", "Conclusions"],
+      ...summary.papers.map((paper) => [
+        paper.title,
+        paper.main_idea,
+        paper.problem_or_hypothesis,
+        paper.experiments,
+        paper.models_and_datasets,
+        paper.results,
+        paper.conclusions,
+      ]),
+    ];
+    const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "research-macha-batch-summary.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="mvp-page">
       <section className="mvp-header">
@@ -89,6 +134,12 @@ export function BatchSummaryPage() {
       </form>
 
       {message ? <p className="status-note">{message}</p> : null}
+      {uploading ? <p className="status-note state-note-active">Uploading PDFs and creating analysis jobs...</p> : null}
+      {!papers.length && !uploading ? (
+        <section className="mvp-panel compact-empty-state">
+          <p>No batch loaded yet. Add multiple PDFs to generate a paper-by-paper comparison table.</p>
+        </section>
+      ) : null}
 
       {papers.length ? (
         <section className="mvp-panel">
@@ -101,10 +152,22 @@ export function BatchSummaryPage() {
           </div>
           <div className="simple-list">
             {papers.map((paper) => (
-              <Link to={`/reader/${paper.id}`} className="paper-status-row" key={paper.id}>
-                <span>{paper.title}</span>
-                <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
-              </Link>
+              <div className="paper-status-row" key={paper.id}>
+                <Link to={`/reader/${paper.id}`}>{paper.title}</Link>
+                <div className="paper-row-actions">
+                  <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
+                  {paper.status === "failed" ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void retryPaperAnalysis(paper.id)}
+                      disabled={retryingIds.has(paper.id)}
+                    >
+                      {retryingIds.has(paper.id) ? "Retrying..." : "Retry"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
             ))}
           </div>
         </section>
@@ -117,6 +180,9 @@ export function BatchSummaryPage() {
               <p className="eyebrow">Summary</p>
               <h3>Comparison table</h3>
             </div>
+            <button type="button" className="secondary-button" onClick={exportCsv}>
+              Export CSV
+            </button>
           </div>
           <p className="brief-summary">{summary.overall_takeaway}</p>
           <div className="table-wrap">
@@ -135,7 +201,9 @@ export function BatchSummaryPage() {
               <tbody>
                 {summary.papers.map((paper) => (
                   <tr key={paper.paper_id}>
-                    <td>{paper.title}</td>
+                    <td className="summary-paper-cell">
+                      <Link to={`/reader/${paper.paper_id}`}>{paper.title}</Link>
+                    </td>
                     <td>{paper.main_idea}</td>
                     <td>{paper.problem_or_hypothesis}</td>
                     <td>{paper.experiments}</td>
@@ -151,6 +219,10 @@ export function BatchSummaryPage() {
       ) : null}
     </div>
   );
+}
+
+function csvCell(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
 }
 
 function getErrorMessage(error: unknown): string {

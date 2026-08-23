@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { PdfViewer } from "../components/PdfViewer";
-import { getPaper, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
+import { analyzePaper, getPaper, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
 import type { ChatMessage, Highlight, PaperDetail, PaperSummary, PaperSummaryResponse } from "../types";
 
 type ReaderTab = "notes" | "highlights" | "chat";
@@ -35,6 +35,7 @@ export function ReaderPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [targetPage, setTargetPage] = useState<number | null>(null);
   const pdfSectionRef = useRef<HTMLElement | null>(null);
@@ -151,6 +152,23 @@ export function ReaderPage() {
     }
   }
 
+  async function handleRetryAnalysis() {
+    if (!paper) {
+      return;
+    }
+    setRetrying(true);
+    setMessage(null);
+    try {
+      await analyzePaper(paper.id);
+      await loadPaper(paper.id);
+      setMessage("Analysis was requeued. Notes will refresh when ready.");
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   function jumpToCitation(page: number) {
     setTargetPage(null);
     window.setTimeout(() => setTargetPage(page), 0);
@@ -189,6 +207,11 @@ export function ReaderPage() {
                 <div className="reader-actions">
                   <span className="status-pill">page {currentPage}</span>
                   <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
+                  {paper.status === "failed" ? (
+                    <button type="button" className="secondary-button" onClick={() => void handleRetryAnalysis()} disabled={retrying}>
+                      {retrying ? "Retrying..." : "Retry analysis"}
+                    </button>
+                  ) : null}
                   <a href={getPdfUrl(paper.id)} target="_blank" rel="noreferrer">
                     Open PDF
                   </a>
