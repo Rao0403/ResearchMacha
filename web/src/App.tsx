@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BookOpen, Files, Search } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 
@@ -5,9 +6,10 @@ import { BatchSummaryPage } from "./pages/BatchSummaryPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { ProjectListPage } from "./pages/ProjectListPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
-import { ReaderPage } from "./pages/ReaderPage";
 import { ResearchWorkflowPage } from "./pages/ResearchWorkflowPage";
 import { SearchPage } from "./pages/SearchPage";
+
+const ReaderPage = lazy(() => import("./pages/ReaderPage").then((module) => ({ default: module.ReaderPage })));
 
 export function App() {
   return (
@@ -41,17 +43,19 @@ export function App() {
       </aside>
 
       <main className="page-frame">
-        <Routes>
-          <Route path="/" element={<ResearchWorkflowPage />} />
-          <Route path="/reader" element={<ReaderPage />} />
-          <Route path="/reader/:paperId" element={<ReaderPage />} />
-          <Route path="/batch-summary" element={<BatchSummaryPage />} />
-          <Route path="/papers/:paperId" element={<ReaderPage />} />
-          <Route path="/debug/projects" element={<ProjectListPage />} />
-          <Route path="/debug/discover" element={<SearchPage />} />
-          <Route path="/debug/library" element={<LibraryPage />} />
-          <Route path="/debug/projects/:projectId" element={<ProjectWorkspacePage />} />
-        </Routes>
+        <Suspense fallback={<p className="status-note">Loading workspace...</p>}>
+          <Routes>
+            <Route path="/" element={<ResearchWorkflowPage />} />
+            <Route path="/reader" element={<ReaderPage />} />
+            <Route path="/reader/:paperId" element={<ReaderPage />} />
+            <Route path="/batch-summary" element={<BatchSummaryPage />} />
+            <Route path="/papers/:paperId" element={<ReaderPage />} />
+            <Route path="/debug/projects" element={<ProjectListPage />} />
+            <Route path="/debug/discover" element={<SearchPage />} />
+            <Route path="/debug/library" element={<LibraryPage />} />
+            <Route path="/debug/projects/:projectId" element={<ProjectWorkspacePage />} />
+          </Routes>
+        </Suspense>
       </main>
     </div>
   );

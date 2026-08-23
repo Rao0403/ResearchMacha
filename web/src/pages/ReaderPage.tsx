@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
+import { PdfViewer } from "../components/PdfViewer";
 import { getPaper, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
 import type { ChatMessage, Highlight, PaperDetail, PaperSummary, PaperSummaryResponse } from "../types";
 
@@ -34,6 +35,7 @@ export function ReaderPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     if (routePaperId) {
@@ -58,6 +60,7 @@ export function ReaderPage() {
     try {
       const nextPaper = await getPaper(paperId);
       setPaper(nextPaper);
+      setCurrentPage(1);
       if (nextPaper.status === "ready") {
         await loadSummary(nextPaper.id);
       } else if (!quiet) {
@@ -175,13 +178,14 @@ export function ReaderPage() {
                   <p className="authors">{paper.authors.join(", ") || "Uploaded paper"}</p>
                 </div>
                 <div className="reader-actions">
+                  <span className="status-pill">page {currentPage}</span>
                   <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
                   <a href={getPdfUrl(paper.id)} target="_blank" rel="noreferrer">
                     Open PDF
                   </a>
                 </div>
               </div>
-              <iframe title={paper.title} src={getPdfUrl(paper.id)} className="pdf-frame" />
+              <PdfViewer title={paper.title} url={getPdfUrl(paper.id)} onPageChange={setCurrentPage} />
             </>
           ) : (
             <div className="empty-state">
