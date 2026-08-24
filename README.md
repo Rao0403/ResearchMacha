@@ -1,22 +1,31 @@
 # ResearchMacha
 
+![React](https://img.shields.io/badge/frontend-React%20%2B%20Vite-a44f2a)
+![FastAPI](https://img.shields.io/badge/backend-FastAPI%20%2B%20SQLAlchemy-24160c)
+![LangChain](https://img.shields.io/badge/agent%20layer-LangChain-2f7a55)
+![Qdrant](https://img.shields.io/badge/vector%20store-Qdrant%20default-5e8c7b)
+![MySQL](https://img.shields.io/badge/database-MySQL-9c6b1f)
+
 ResearchMacha is a local-first research helper system for turning a research question into relevant papers, cited paper notes, cross-paper findings, and suggested next experiments.
 
-## MVP Scope
+It is built as a portfolio-grade MVP around explainable agentic RAG: LLMs handle planning, paper selection, and synthesis; deterministic backend tools handle search, import, parsing, indexing, and persistence.
 
-ResearchMacha is now focused around three showcase workflows:
+![ResearchMacha architecture](docs/assets/architecture.svg)
+
+## Core Workflows
 
 - `Research`: type one research question, let the backend plan/search/select papers, approve the selected papers, then receive a cited research brief with findings, gaps, experiments, and research directions.
-- `Reader`: upload or open one PDF, read it beside structured notes, cited highlights, and a grounded chat panel.
-- `Batch Summary`: upload one or more PDFs and get a compact comparison table covering main idea, problem/hypothesis, experiments, models/datasets, results, and conclusions.
+- `Reader`: upload or open one PDF, read it in a PDF.js viewer beside structured notes, cited highlights, and grounded chat.
+- `Batch Summary`: upload one or more PDFs and get a comparison table covering main idea, problem/hypothesis, experiments, models/datasets, results, and conclusions.
+
+![ResearchMacha demo walkthrough](docs/assets/demo-walkthrough.svg)
 
 ## Stack
 
-- Frontend: React, Vite, TypeScript, React Router
+- Frontend: React, Vite, TypeScript, React Router, PDF.js
 - Backend: FastAPI, SQLAlchemy, Alembic, MySQL
 - Agent/RAG layer: LangChain with Ollama-first local models
 - AI providers: `mock`, `ollama`, and `openai`
-- Embeddings: local deterministic fallback for development, provider-backed where available
 - Vector retrieval: Qdrant by default with MySQL JSON cosine similarity as fallback
 - Memory: MySQL source-of-truth rows indexed into Qdrant for semantic recall, with MySQL fallback
 
@@ -27,78 +36,127 @@ ResearchMacha is now focused around three showcase workflows:
 |-- api
 |   |-- alembic
 |   |-- app
+|   |-- scripts
 |   `-- tests
+|-- docs
+|   |-- assets
+|   |-- architecture.md
+|   |-- demo.md
+|   |-- showcase.md
+|   |-- testing-checklist.md
+|   `-- walkthrough.md
 `-- web
     `-- src
 ```
 
-## Local Setup
+## Quickstart
 
-1. Copy `.env.example` to `.env` and fill in your MySQL connection values.
-2. Create the MySQL database named in `MYSQL_DATABASE`.
-3. Make sure Ollama can access the configured chat model. The current default is `gpt-oss:20b-cloud`.
-4. Start Qdrant for the recommended retrieval path.
+### 1. Configure Environment
 
-   ```bash
-   docker compose up -d qdrant
-   ```
+Copy `.env.example` to `.env` and set your MySQL values.
 
-   Then set:
+Recommended local settings:
 
-   ```env
-   VECTOR_PROVIDER=qdrant
-   QDRANT_URL=http://localhost:6333
-   QDRANT_COLLECTION=research_macha_chunks
-   QDRANT_MEMORY_COLLECTION=research_macha_memories
-   ```
+```env
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=your-password
+MYSQL_DATABASE=research_macha
 
-5. Backend:
+AI_PROVIDER=ollama
+OLLAMA_CHAT_MODEL=gpt-oss:20b-cloud
 
-   ```bash
-   cd api
-   python -m venv .venv
-   .venv\Scripts\activate
-   pip install -e .
-   alembic upgrade head
-   uvicorn app.main:app --reload --port 8000
-   ```
+VECTOR_PROVIDER=qdrant
+QDRANT_URL=http://localhost:6333
+QDRANT_COLLECTION=research_macha_chunks
+QDRANT_MEMORY_COLLECTION=research_macha_memories
+```
 
-6. Frontend:
+Create the database:
 
-   ```bash
-   cd web
-   npm install
-   npm run dev
-   ```
+```sql
+CREATE DATABASE research_macha;
+```
 
-7. Open `http://localhost:5173`.
+### 2. Start Qdrant
 
-## Demo Flow
+```powershell
+docker compose up -d qdrant
+```
 
-1. Open `Research`, enter a research question, and submit.
-2. Review the LLM-selected arXiv papers and click `Approve selected papers`.
-3. Wait for imported papers to finish analysis and for the final cited brief to appear.
-4. Inspect the agent trace and memory signals to see whether planning, selection, retrieval, or fallback paths were used.
-5. Open `Reader`, upload a PDF or paste an existing paper id, then inspect notes/highlights and ask one grounded question.
-6. Open `Batch Summary`, upload multiple PDFs, and wait for the comparison table.
+### 3. Start Backend
 
-Debug/manual project routes still exist under `/debug/...`, but the visible MVP navigation intentionally exposes only the three workflows above.
+```powershell
+cd api
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .[dev]
+.\.venv\Scripts\alembic.exe upgrade head
+.\.venv\Scripts\uvicorn.exe app.main:app --reload --port 8000
+```
 
-## AI Providers
+### 4. Start Frontend
 
-- `AI_PROVIDER=mock` gives a deterministic local flow for scaffolding and UI testing.
-- `AI_PROVIDER=ollama` uses your local Ollama instance. The default chat model is `gpt-oss:20b-cloud`.
-- `AI_PROVIDER=openai` uses the configured OpenAI key and model.
+```powershell
+cd web
+cmd /c npm install
+cmd /c npm run dev
+```
+
+Open:
+
+```text
+http://localhost:5173
+```
+
+## Demo Commands
+
+Seed a demo research project with known arXiv candidates:
+
+```powershell
+cd api
+.\.venv\Scripts\python.exe scripts\seed_demo.py
+```
+
+Run checks:
+
+```powershell
+cd api
+.\.venv\Scripts\python.exe -m pytest
+
+cd ..\web
+cmd /c npm audit --json
+cmd /c npm run build
+```
+
+## What Makes This Agentic
+
+ResearchMacha uses explicit backend tools instead of a vague autonomous agent. Each workflow records tool inputs, outputs, status, and fallbacks.
+
+Tool steps:
+
+- `plan_search`
+- `search_arxiv`
+- `rank_candidates`
+- `select_candidates`
+- `import_papers`
+- `analyze_papers`
+- `synthesize_brief`
+
+This makes the agent behavior inspectable in the UI and queryable in MySQL.
 
 ## Documentation
 
-- `docs/architecture.md` explains the system architecture and agentic RAG pipeline.
-- `docs/demo.md` gives the local demo checklist and troubleshooting notes.
+- [Showcase](docs/showcase.md): portfolio explanation of agentic RAG, tool use, memory, and vector retrieval.
+- [Architecture](docs/architecture.md): system architecture and data flow.
+- [Walkthrough](docs/walkthrough.md): demo script and visual assets.
+- [Demo](docs/demo.md): local demo setup and troubleshooting.
+- [Testing checklist](docs/testing-checklist.md): acceptance checks before final refinement.
 
 ## Known Limitations
 
-- V1 assumes born-digital PDFs and does not include OCR.
-- Online discovery is limited to arXiv.
-- The analysis worker runs in-process through FastAPI background tasks.
-- If Qdrant is unavailable, chunk retrieval and memory recall fall back to MySQL JSON embeddings. Existing papers need re-analysis before their chunks and paper memories are inserted into Qdrant.
-- LangChain is used as a clear chain layer, not as an autonomous multi-agent loop.
+- Discovery is limited to arXiv.
+- PDFs must be born-digital; OCR is not included.
+- Background work runs in-process through FastAPI background tasks.
+- The app is single-user and local-first; no hosted auth is included.
+- Memory is intentionally simple and becomes useful after repeated workflows.
