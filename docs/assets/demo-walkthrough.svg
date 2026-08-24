@@ -1,0 +1,76 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">ResearchMacha demo walkthrough</title>
+  <desc id="desc">Three panels showing the Research, Reader, and Batch Summary workflows.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FBF6EF"/>
+      <stop offset="1" stop-color="#EEE2D2"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#39210E" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="720" rx="36" fill="url(#bg)"/>
+  <circle cx="145" cy="130" r="210" fill="#D08C60" opacity="0.18"/>
+  <circle cx="1085" cy="510" r="230" fill="#5E8C7B" opacity="0.15"/>
+
+  <text x="70" y="78" fill="#24160C" font-family="Georgia, serif" font-size="42" font-weight="700">ResearchMacha Demo</text>
+  <text x="70" y="112" fill="#6F5A4A" font-family="Arial, sans-serif" font-size="16">Question-driven research, grounded paper reading, and batch synthesis</text>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="165" width="330" height="440" rx="28" fill="#FFF9F1" stroke="#DCC9B7"/>
+    <text x="100" y="212" fill="#A44F2A" font-family="Arial, sans-serif" font-size="13" letter-spacing="3">RESEARCH</text>
+    <text x="100" y="246" fill="#24160C" font-family="Georgia, serif" font-size="27" font-weight="700">Ask once, approve once</text>
+    <rect x="100" y="284" width="270" height="86" rx="16" fill="#F4EFE7" stroke="#E5D2C0"/>
+    <text x="122" y="318" fill="#6F5A4A" font-family="Arial, sans-serif" font-size="14">What reduces hallucinations</text>
+    <text x="122" y="342" fill="#6F5A4A" font-family="Arial, sans-serif" font-size="14">in RAG systems?</text>
+    <rect x="100" y="398" width="270" height="38" rx="19" fill="#24160C"/>
+    <text x="133" y="423" fill="#FFF9F1" font-family="Arial, sans-serif" font-size="14">Agent trace: 7 tools recorded</text>
+    <rect x="100" y="460" width="270" height="28" rx="14" fill="#EBDAC9"/>
+    <rect x="100" y="500" width="230" height="28" rx="14" fill="#EBDAC9"/>
+    <rect x="100" y="540" width="255" height="28" rx="14" fill="#EBDAC9"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="435" y="165" width="330" height="440" rx="28" fill="#FFF9F1" stroke="#DCC9B7"/>
+    <text x="465" y="212" fill="#A44F2A" font-family="Arial, sans-serif" font-size="13" letter-spacing="3">READER</text>
+    <text x="465" y="246" fill="#24160C" font-family="Georgia, serif" font-size="27" font-weight="700">Cited reading workspace</text>
+    <rect x="465" y="282" width="150" height="246" rx="14" fill="#FDFBF7" stroke="#E5D2C0"/>
+    <rect x="485" y="310" width="110" height="12" rx="6" fill="#E4D2C0"/>
+    <rect x="485" y="344" width="110" height="12" rx="6" fill="#E4D2C0"/>
+    <rect x="485" y="378" width="86" height="12" rx="6" fill="#E4D2C0"/>
+    <rect x="637" y="282" width="98" height="246" rx="14" fill="#F4EFE7" stroke="#E5D2C0"/>
+    <text x="653" y="316" fill="#24160C" font-family="Arial, sans-serif" font-size="13" font-weight="700">Notes</text>
+    <text x="653" y="354" fill="#6F5A4A" font-family="Arial, sans-serif" font-size="12">p. 2</text>
+    <text x="653" y="392" fill="#6F5A4A" font-family="Arial, sans-serif" font-size="12">p. 5</text>
+    <text x="653" y="430" fill="#6F5A4A" font-family="Arial, sans-serif" font-size="12">p. 8</text>
+    <rect x="465" y="552" width="270" height="36" rx="18" fill="#A44F2A" opacity="0.14"/>
+    <text x="493" y="575" fill="#A44F2A" font-family="Arial, sans-serif" font-size="14">Click citations to jump pages</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="800" y="165" width="330" height="440" rx="28" fill="#FFF9F1" stroke="#DCC9B7"/>
+    <text x="830" y="212" fill="#A44F2A" font-family="Arial, sans-serif" font-size="13" letter-spacing="3">BATCH</text>
+    <text x="830" y="246" fill="#24160C" font-family="Georgia, serif" font-size="27" font-weight="700">Compare multiple PDFs</text>
+    <rect x="830" y="286" width="270" height="52" rx="16" fill="#F4EFE7" stroke="#E5D2C0"/>
+    <text x="854" y="318" fill="#6F5A4A" font-family="Arial, sans-serif" font-size="14">3 PDFs uploaded, analyzing...</text>
+    <rect x="830" y="372" width="270" height="156" rx="14" fill="#FDFBF7" stroke="#E5D2C0"/>
+    <line x1="830" y1="412" x2="1100" y2="412" stroke="#E5D2C0"/>
+    <line x1="918" y1="372" x2="918" y2="528" stroke="#E5D2C0"/>
+    <line x1="1010" y1="372" x2="1010" y2="528" stroke="#E5D2C0"/>
+    <text x="850" y="398" fill="#24160C" font-family="Arial, sans-serif" font-size="12" font-weight="700">Paper</text>
+    <text x="938" y="398" fill="#24160C" font-family="Arial, sans-serif" font-size="12" font-weight="700">Results</text>
+    <text x="1030" y="398" fill="#24160C" font-family="Arial, sans-serif" font-size="12" font-weight="700">Gaps</text>
+    <rect x="850" y="438" width="58" height="9" rx="4" fill="#E4D2C0"/>
+    <rect x="938" y="438" width="54" height="9" rx="4" fill="#E4D2C0"/>
+    <rect x="1030" y="438" width="48" height="9" rx="4" fill="#E4D2C0"/>
+    <rect x="850" y="478" width="58" height="9" rx="4" fill="#E4D2C0"/>
+    <rect x="938" y="478" width="54" height="9" rx="4" fill="#E4D2C0"/>
+    <rect x="1030" y="478" width="48" height="9" rx="4" fill="#E4D2C0"/>
+    <rect x="830" y="552" width="132" height="36" rx="18" fill="#24160C"/>
+    <text x="858" y="575" fill="#FFF9F1" font-family="Arial, sans-serif" font-size="14">Export CSV</text>
+  </g>
+
+  <text x="70" y="660" fill="#6F5A4A" font-family="Arial, sans-serif" font-size="14">Suggested recorded demo: run Research workflow, open a cited paper in Reader, click citations, then export a Batch Summary CSV.</text>
+</svg>
