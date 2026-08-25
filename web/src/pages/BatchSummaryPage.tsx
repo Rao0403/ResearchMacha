@@ -121,15 +121,24 @@ export function BatchSummaryPage() {
   }
 
   return (
-    <div className="mvp-page">
-      <section className="mvp-header">
-        <p className="eyebrow">PDF batch summary</p>
-        <h2>Upload papers and get one compact comparison of what matters.</h2>
+    <div className="mvp-page batch-page">
+      <section className="mvp-header batch-hero">
+        <div>
+          <p className="eyebrow">PDF batch summary</p>
+          <h2>Turn a folder of papers into a comparison table.</h2>
+          <p>Upload multiple PDFs, let the analysis jobs finish, then export a concise research matrix.</p>
+        </div>
       </section>
 
-      <form className="batch-upload" onSubmit={handleUpload}>
-        <input name="files" type="file" accept="application/pdf" multiple />
-        <input value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Batch summary goal" />
+      <form className="batch-upload batch-console" onSubmit={handleUpload}>
+        <label>
+          <span>PDF collection</span>
+          <input name="files" type="file" accept="application/pdf" multiple />
+        </label>
+        <label>
+          <span>Summary goal</span>
+          <input value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Batch summary goal" />
+        </label>
         <button type="submit" disabled={uploading}>{uploading ? "Uploading..." : "Upload and summarize"}</button>
       </form>
 
@@ -150,6 +159,7 @@ export function BatchSummaryPage() {
             </div>
             {summarizing ? <span className="status-pill status-processing">summarizing</span> : null}
           </div>
+          <BatchStats papers={papers} />
           <div className="simple-list">
             {papers.map((paper) => (
               <div className="paper-status-row" key={paper.id}>
@@ -223,6 +233,32 @@ export function BatchSummaryPage() {
 
 function csvCell(value: string) {
   return `"${value.replace(/"/g, '""')}"`;
+}
+
+function BatchStats({ papers }: { papers: LibraryPaper[] }) {
+  const ready = papers.filter((paper) => paper.status === "ready").length;
+  const failed = papers.filter((paper) => paper.status === "failed").length;
+  const running = papers.length - ready - failed;
+  return (
+    <div className="batch-stats">
+      <span>
+        <strong>{papers.length}</strong>
+        uploaded
+      </span>
+      <span>
+        <strong>{running}</strong>
+        running
+      </span>
+      <span>
+        <strong>{ready}</strong>
+        ready
+      </span>
+      <span>
+        <strong>{failed}</strong>
+        failed
+      </span>
+    </div>
+  );
 }
 
 function getErrorMessage(error: unknown): string {

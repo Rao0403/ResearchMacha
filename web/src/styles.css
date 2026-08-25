@@ -1440,6 +1440,11 @@ textarea:focus {
   line-height: 1.55;
 }
 
+.summary-table th:first-child,
+.summary-table td:first-child {
+  box-shadow: 8px 0 18px rgba(57, 33, 14, 0.05);
+}
+
 .summary-paper-cell {
   position: sticky;
   left: 0;
@@ -1500,6 +1505,48 @@ textarea:focus {
   line-height: 1.55;
 }
 
+.reader-hero,
+.batch-hero {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 1.4rem;
+  background:
+    linear-gradient(135deg, rgba(255, 253, 248, 0.9), rgba(65, 111, 99, 0.08)),
+    var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.reader-hero h2,
+.batch-hero h2 {
+  max-width: 980px;
+}
+
+.batch-hero p,
+.reader-hero-meta {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.reader-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.reader-hero-meta > span:not(.status-pill) {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  background: rgba(255, 251, 245, 0.64);
+  font-size: 0.8rem;
+}
+
 .reader-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
@@ -1510,11 +1557,69 @@ textarea:focus {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.7rem;
+  align-items: end;
+}
+
+.reader-command-bar,
+.batch-console {
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  padding: 0.85rem;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.86), rgba(249, 240, 228, 0.62)),
+    rgba(255, 251, 245, 0.72);
+  box-shadow: 0 14px 34px rgba(57, 33, 14, 0.07);
+}
+
+.reader-command-bar label,
+.batch-console label {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.reader-command-bar label span,
+.batch-console label span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.batch-console {
+  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.15fr) auto;
+}
+
+.batch-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.batch-stats span {
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 0.75rem;
+  background: rgba(255, 253, 248, 0.68);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.batch-stats strong {
+  color: var(--text);
+  font-size: 1.35rem;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .reader-grid {
   display: grid;
-  grid-template-columns: minmax(380px, 1.15fr) minmax(320px, 0.85fr);
+  grid-template-columns: minmax(420px, 1.2fr) minmax(340px, 0.8fr);
   gap: 1rem;
   min-height: 760px;
 }
@@ -1526,9 +1631,24 @@ textarea:focus {
   padding: 1rem;
 }
 
+.reader-document-header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.9rem;
+}
+
+.reader-document-header h3 {
+  font-family: var(--font-serif);
+  font-size: 1.45rem;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
 .reader-side-panel {
+  position: sticky;
+  top: 1.5rem;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  max-height: calc(100vh - 3rem);
   overflow: hidden;
 }
 
@@ -1543,6 +1663,7 @@ textarea:focus {
   background: transparent;
   color: var(--muted);
   box-shadow: none;
+  border: 0;
 }
 
 .tab-row button:hover,
@@ -1562,13 +1683,15 @@ textarea:focus {
 }
 
 .notes-list section {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 0.9rem;
+  background: rgba(255, 253, 248, 0.68);
 }
 
 .notes-list section:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.9rem;
 }
 
 .notes-list p {
@@ -1583,6 +1706,34 @@ textarea:focus {
   border-left: 3px solid var(--accent);
   padding-left: 0.8rem;
   color: var(--muted);
+}
+
+.reader-chat {
+  grid-template-rows: minmax(260px, 1fr) auto;
+}
+
+.reader-panel-empty {
+  margin: 1rem;
+}
+
+.reader-chat .chat-thread {
+  align-content: start;
+  overflow: auto;
+}
+
+.reader-chat .chat-bubble {
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 22px rgba(57, 33, 14, 0.06);
+}
+
+.reader-chat .chat-user {
+  background: rgba(36, 22, 12, 0.08);
+}
+
+.reader-chat .chat-assistant {
+  background:
+    linear-gradient(135deg, rgba(164, 79, 42, 0.08), rgba(65, 111, 99, 0.08)),
+    rgba(255, 253, 248, 0.76);
 }
 
 .highlight-citation-button {
@@ -1655,13 +1806,21 @@ textarea:focus {
   .split-workbench,
   .batch-upload,
   .research-command,
+  .batch-console,
   .memory-row {
     grid-template-columns: 1fr;
   }
 
   .workflow-stats,
-  .loading-steps {
+  .loading-steps,
+  .batch-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reader-side-panel {
+    position: relative;
+    top: auto;
+    max-height: none;
   }
 }
 
@@ -1694,13 +1853,16 @@ textarea:focus {
   }
 
   .workflow-stats,
-  .loading-steps {
+  .loading-steps,
+  .batch-stats {
     grid-template-columns: 1fr;
   }
 
   .panel-heading,
   .approval-row,
   .command-footer,
+  .reader-hero,
+  .batch-hero,
   .reader-title-row,
   .paper-status-row,
   .trace-step {

@@ -177,18 +177,33 @@ export function ReaderPage() {
 
   return (
     <div className="mvp-page reader-page">
-      <section className="mvp-header">
-        <p className="eyebrow">Paper reader</p>
-        <h2>Read one paper with grounded notes, highlights, and chat.</h2>
+      <section className="mvp-header reader-hero">
+        <div>
+          <p className="eyebrow">Paper reader</p>
+          <h2>Read the PDF. Follow the citations. Ask grounded questions.</h2>
+        </div>
+        {paper ? (
+          <div className="reader-hero-meta">
+            <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
+            <span>{paper.chunks.length} chunks</span>
+            <span>{paper.highlights.length} highlights</span>
+          </div>
+        ) : null}
       </section>
 
-      <div className="reader-controls">
+      <div className="reader-controls reader-command-bar">
         <form onSubmit={handleUpload}>
-          <input name="file" type="file" accept="application/pdf" />
+          <label>
+            <span>Upload a PDF</span>
+            <input name="file" type="file" accept="application/pdf" />
+          </label>
           <button type="submit" disabled={uploading}>{uploading ? "Uploading..." : "Upload PDF"}</button>
         </form>
         <form onSubmit={handleOpen}>
-          <input value={paperIdInput} onChange={(event) => setPaperIdInput(event.target.value)} placeholder="Open existing paper id" />
+          <label>
+            <span>Open existing paper</span>
+            <input value={paperIdInput} onChange={(event) => setPaperIdInput(event.target.value)} placeholder="Paste paper id" />
+          </label>
           <button type="submit">Open</button>
         </form>
       </div>
@@ -199,7 +214,7 @@ export function ReaderPage() {
         <section className="pdf-workspace" ref={pdfSectionRef}>
           {paper ? (
             <>
-              <div className="reader-title-row">
+              <div className="reader-title-row reader-document-header">
                 <div>
                   <h3>{paper.title}</h3>
                   <p className="authors">{paper.authors.join(", ") || "Uploaded paper"}</p>
@@ -227,7 +242,7 @@ export function ReaderPage() {
         </section>
 
         <aside className="reader-side-panel">
-          <div className="tab-row">
+          <div className="tab-row reader-tabs">
             <button type="button" className={activeTab === "notes" ? "tab-active" : ""} onClick={() => setActiveTab("notes")}>
               Notes
             </button>
@@ -264,7 +279,7 @@ export function ReaderPage() {
 
 function NotesPanel({ summary, onCitationClick }: { summary: PaperSummary | null; onCitationClick: (page: number) => void }) {
   if (!summary) {
-    return <p className="status-note">Notes are generated after paper analysis finishes.</p>;
+    return <p className="status-note reader-panel-empty">Notes are generated after paper analysis finishes.</p>;
   }
 
   return (
@@ -286,7 +301,7 @@ function NotesPanel({ summary, onCitationClick }: { summary: PaperSummary | null
 
 function HighlightsPanel({ highlights, onCitationClick }: { highlights: Highlight[]; onCitationClick: (page: number) => void }) {
   if (!highlights.length) {
-    return <p className="status-note">Highlights are generated after paper analysis finishes.</p>;
+    return <p className="status-note reader-panel-empty">Highlights are generated after paper analysis finishes.</p>;
   }
 
   return (
