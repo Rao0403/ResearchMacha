@@ -90,23 +90,40 @@ export function ResearchWorkflowPage() {
   }
 
   return (
-    <div className="mvp-page">
-      <section className="mvp-header">
-        <p className="eyebrow">Research workflow</p>
-        <h2>Ask one research question. Approve the papers. Get a cited brief.</h2>
-      </section>
+    <div className="mvp-page research-page">
+      <section className="research-hero">
+        <div className="research-hero-copy">
+          <p className="eyebrow">Research workflow</p>
+          <h2>Ask one research question. Get a cited evidence brief.</h2>
+          <p>
+            The agent plans search queries, finds arXiv candidates, ranks evidence, and asks for approval before
+            importing papers.
+          </p>
+          <div className="hero-chip-row">
+            <span>Explainable tool trace</span>
+            <span>Qdrant retrieval</span>
+            <span>Memory-aware selection</span>
+          </div>
+        </div>
 
-      <form className="research-command" onSubmit={handleSubmit}>
-        <textarea
-          value={question}
-          onChange={(event) => setQuestion(event.target.value)}
-          placeholder="Example: What are reliable methods for reducing hallucinations in retrieval augmented generation systems?"
-          rows={3}
-        />
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Planning and finding papers..." : "Start"}
-        </button>
-      </form>
+        <form className="research-command command-card" onSubmit={handleSubmit}>
+          <label>
+            <span>Research question</span>
+            <textarea
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder="Example: What are reliable methods for reducing hallucinations in retrieval augmented generation systems?"
+              rows={5}
+            />
+          </label>
+          <div className="command-footer">
+            <span>Press Start, then only approve the selected papers.</span>
+            <button type="submit" disabled={submitting}>
+              {submitting ? "Agent running..." : "Start research"}
+            </button>
+          </div>
+        </form>
+      </section>
 
       <StatusTrack status={project?.status} busy={submitting} />
       {message ? <p className="status-note">{message}</p> : null}
@@ -117,7 +134,7 @@ export function ResearchWorkflowPage() {
       {project?.memory_signals?.length ? <MemorySignals memories={project.memory_signals} /> : null}
 
       {project ? (
-        <section className="mvp-panel">
+        <section className="mvp-panel candidate-panel">
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Selected by agent</p>
@@ -147,7 +164,7 @@ export function ResearchWorkflowPage() {
       ) : null}
 
       {project?.papers.length ? (
-        <section className="mvp-panel">
+        <section className="mvp-panel imported-panel">
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Analysis progress</p>
@@ -166,7 +183,7 @@ export function ResearchWorkflowPage() {
       ) : null}
 
       {project?.synthesis_json ? (
-        <section className="mvp-panel">
+        <section className="mvp-panel brief-panel">
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Final brief</p>
@@ -428,7 +445,7 @@ function CandidateTable({
         </thead>
         <tbody>
           {candidates.map((candidate) => (
-            <tr key={candidate.id}>
+            <tr className={selected.has(candidate.id) ? "candidate-selected-row" : ""} key={candidate.id}>
               <td>
                 <input type="checkbox" checked={selected.has(candidate.id)} onChange={() => onToggle(candidate.id)} />
               </td>
@@ -437,7 +454,9 @@ function CandidateTable({
                 <span>{candidate.authors.join(", ") || "Unknown authors"}</span>
               </td>
               <td>{candidate.year ?? "n/a"}</td>
-              <td>{candidate.score}</td>
+              <td>
+                <ScoreMeter score={candidate.score} />
+              </td>
               <td>{candidate.rationale}</td>
             </tr>
           ))}
@@ -447,10 +466,24 @@ function CandidateTable({
   );
 }
 
+function ScoreMeter({ score }: { score: number }) {
+  return (
+    <div className="score-meter" aria-label={`Candidate score ${score}`}>
+      <strong>{score}</strong>
+      <span>
+        <i style={{ width: `${Math.max(4, Math.min(100, score))}%` }} />
+      </span>
+    </div>
+  );
+}
+
 function ResearchBriefView({ brief }: { brief: ResearchBrief }) {
   return (
     <div className="brief-layout">
-      <p className="brief-summary">{brief.executive_summary}</p>
+      <div className="brief-summary brief-executive">
+        <span>Executive synthesis</span>
+        <p>{brief.executive_summary}</p>
+      </div>
       {briefSections.map(([key, label]) => (
         <section className="brief-section" key={key}>
           <h4>{label}</h4>
