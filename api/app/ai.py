@@ -98,8 +98,18 @@ class ChatPayload:
     citations: list[dict[str, str | int]]
 
 
+@dataclass(frozen=True)
+class EmbeddingResult:
+    vectors: list[list[float]]
+    fingerprint: str
+
+    @property
+    def dimension(self) -> int | None:
+        return len(self.vectors[0]) if self.vectors else None
+
+
 class AIProvider:
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> EmbeddingResult:
         raise NotImplementedError
 
     def plan_research(self, question: str) -> ResearchPlan:
@@ -138,8 +148,11 @@ class AIProvider:
 
 
 class MockProvider(AIProvider):
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        return [hash_embedding(text) for text in texts]
+    def embed_texts(self, texts: list[str]) -> EmbeddingResult:
+        return EmbeddingResult(
+            vectors=[hash_embedding(text) for text in texts],
+            fingerprint=f"mock:hash-v1:{settings.embedding_dim}",
+        )
 
     def plan_research(self, question: str) -> ResearchPlan:
         compact = " ".join(question.split())
@@ -308,16 +321,18 @@ class LangChainProvider(MockProvider):
             raise RuntimeError("LangChain dependencies are not installed")
         self.chat_model = build_chat_model()
         self.embedding_model = build_embedding_model()
+        if settings.ai_provider == "openai":
+            self.embedding_fingerprint = f"openai:{settings.openai_embed_model}"
+        elif settings.ai_provider == "ollama":
+            self.embedding_fingerprint = f"ollama:{settings.ollama_embed_model}"
+        else:  # pragma: no cover - guarded by get_ai_provider
+            raise RuntimeError(f"Unsupported AI provider: {settings.ai_provider}")
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> EmbeddingResult:
         if self.embedding_model is None:
-            record_fallback("ai.embed_texts", "hash_embedding", "No provider embedding model is configured.")
-            return super().embed_texts(texts)
-        try:
-            return self.embedding_model.embed_documents(texts)
-        except Exception as exc:
-            record_fallback("ai.embed_texts", "hash_embedding", str(exc), {"text_count": len(texts)})
-            return super().embed_texts(texts)
+            raise RuntimeError(f"No embedding model is configured for {settings.ai_provider}")
+        vectors = self.embedding_model.embed_documents(texts)
+        return EmbeddingResult(vectors=vectors, fingerprint=self.embedding_fingerprint)
 
     def plan_research(self, question: str) -> ResearchPlan:
         try:
@@ -603,7 +618,7 @@ def build_chat_model() -> Any:
 
 def build_embedding_model() -> Any:
     if settings.ai_provider == "openai" and OpenAIEmbeddings is not None:
-        return OpenAIEmbeddings(model="text-embedding-3-small", api_key=settings.openai_api_key)
+        return OpenAIEmbeddings(model=settings.openai_embed_model, api_key=settings.openai_api_key)
     if settings.ai_provider == "ollama" and OllamaEmbeddings is not None:
         return OllamaEmbeddings(model=settings.ollama_embed_model, base_url=settings.ollama_base_url)
     return None
@@ -681,11 +696,7 @@ def hash_embedding(text: str) -> list[float]:
 
 def get_ai_provider() -> AIProvider:
     if settings.ai_provider in {"ollama", "openai"}:
-        try:
-            return LangChainProvider()
-        except Exception as exc:
-            record_fallback("ai.provider", "mock_provider", str(exc), {"ai_provider": settings.ai_provider})
-            return MockProvider()
-    if settings.ai_provider != "mock":
-        record_fallback("ai.provider", "mock_provider", f"Unknown AI_PROVIDER={settings.ai_provider}")
-    return MockProvider()
+        return LangChainProvider()
+    if settings.ai_provider == "mock":
+        return MockProvider()
+    raise RuntimeError(f"Unknown AI_PROVIDER={settings.ai_provider}")

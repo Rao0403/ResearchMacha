@@ -26,6 +26,7 @@ from app.services.fallbacks import record_fallback
 from app.services.memory import create_memory, latest_memories, memory_payload, retrieve_memories
 from app.services.papers import create_or_update_paper_from_arxiv
 from app.services.vector_store import get_vector_store
+from app.services.retrieval import retrieve_paper_chunks
 
 DEMO_QUESTION = "How can retrieval augmented generation improve factuality in domain-specific question answering?"
 DEMO_ARXIV_IDS = ["2005.11401", "2310.11511", "2403.10131"]
@@ -497,15 +498,7 @@ def summarize_batch_papers(db: Session, paper_ids: list[str], goal: str) -> Batc
 
 
 def select_context_chunks(db: Session, paper: Paper, query: str, limit: int) -> list[PaperChunk]:
-    try:
-        query_embedding = get_ai_provider().embed_texts([query])[0]
-        chunks = get_vector_store().search_paper_chunks(db, paper.id, query_embedding, limit=limit)
-        if chunks:
-            return chunks
-        record_fallback("research.select_context_chunks", "first_chunks", "Vector retrieval returned no chunks.", {"paper_id": paper.id, "limit": limit})
-    except Exception as exc:
-        record_fallback("research.select_context_chunks", "first_chunks", str(exc), {"paper_id": paper.id, "limit": limit})
-    return first_chunks(paper, limit)
+    return retrieve_paper_chunks(db, paper.id, query, limit=limit)
 
 
 def first_chunks(paper: Paper, limit: int) -> list[PaperChunk]:

@@ -12,6 +12,7 @@ from app.ai import get_ai_provider
 from app.services.fallbacks import clear_fallback_events, pop_fallback_events, record_fallback
 from app.services.memory import create_paper_fact_memory
 from app.services.pdf import chunk_pages, extract_pdf_pages
+from app.services.retrieval import retrieve_paper_chunks
 from app.services.vector_store import get_vector_store
 
 
@@ -58,7 +59,17 @@ def process_analysis_job(job_id: str) -> None:
         chunks = chunk_pages(pages)
         clear_fallback_events()
         provider = get_ai_provider()
-        embeddings = provider.embed_texts([chunk["text"] for chunk in chunks]) if chunks else []
+        embedding_result = None
+        if chunks:
+            try:
+                embedding_result = provider.embed_texts([chunk["text"] for chunk in chunks])
+            except Exception as exc:  # noqa: BLE001 - unembedded chunks remain usable through lexical retrieval
+                record_fallback(
+                    "analysis.embed_chunks",
+                    "unembedded_chunks_with_lexical_retrieval",
+                    str(exc),
+                    {"paper_id": paper.id, "chunk_count": len(chunks)},
+                )
 
         for index, chunk in enumerate(chunks):
             db.add(
@@ -69,7 +80,13 @@ def process_analysis_job(job_id: str) -> None:
                     page_end=chunk["page_end"],
                     section_label=chunk.get("section_label"),
                     text=chunk["text"],
-                    embedding=embeddings[index] if index < len(embeddings) else None,
+                    embedding=(
+                        embedding_result.vectors[index]
+                        if embedding_result is not None and index < len(embedding_result.vectors)
+                        else None
+                    ),
+                    embedding_fingerprint=embedding_result.fingerprint if embedding_result is not None else None,
+                    embedding_dim=embedding_result.dimension if embedding_result is not None else None,
                 )
             )
 
@@ -163,8 +180,7 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
     history = [{"role": message.role, "content": message.content} for message in session.messages]
     clear_fallback_events()
     provider = get_ai_provider()
-    question_embedding = provider.embed_texts([question])[0]
-    retrieved = get_vector_store().search_paper_chunks(db, paper.id, question_embedding, limit=4)
+    retrieved = retrieve_paper_chunks(db, paper.id, question, limit=4)
 
     chunk_payload = [
         {

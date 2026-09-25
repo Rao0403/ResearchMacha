@@ -38,7 +38,10 @@ def create_memory(
     db.flush()
 
     try:
-        memory.embedding = get_ai_provider().embed_texts([text])[0]
+        embedding_result = get_ai_provider().embed_texts([text])
+        memory.embedding = embedding_result.vectors[0]
+        memory.embedding_fingerprint = embedding_result.fingerprint
+        memory.embedding_dim = embedding_result.dimension
     except Exception as exc:
         record_fallback(
             "memory.embed",
@@ -105,8 +108,14 @@ def retrieve_memories(
     if not query.strip():
         return []
     try:
-        query_embedding = get_ai_provider().embed_texts([query])[0]
-        return get_vector_store().search_memories(db, query_embedding, scope=scope, limit=limit)
+        embedding_result = get_ai_provider().embed_texts([query])
+        return get_vector_store().search_memories(
+            db,
+            embedding_result.vectors[0],
+            embedding_result.fingerprint,
+            scope=scope,
+            limit=limit,
+        )
     except Exception as exc:
         record_fallback(
             "memory.retrieve",

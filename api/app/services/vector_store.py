@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from functools import lru_cache
 from typing import Any, Protocol
 
@@ -32,6 +33,7 @@ class VectorStore(Protocol):
         db: Session,
         paper_id: str,
         query_embedding: list[float],
+        embedding_fingerprint: str,
         limit: int = 4,
     ) -> list[PaperChunk]:
         raise NotImplementedError
@@ -46,6 +48,7 @@ class VectorStore(Protocol):
         self,
         db: Session,
         query_embedding: list[float],
+        embedding_fingerprint: str,
         scope: str | None = None,
         limit: int = 5,
     ) -> list[ResearchMemory]:
@@ -66,11 +69,16 @@ class MySQLVectorStore:
         db: Session,
         paper_id: str,
         query_embedding: list[float],
+        embedding_fingerprint: str,
         limit: int = 4,
     ) -> list[PaperChunk]:
         chunks = (
             db.query(PaperChunk)
-            .filter(PaperChunk.paper_id == paper_id)
+            .filter(
+                PaperChunk.paper_id == paper_id,
+                PaperChunk.embedding_fingerprint == embedding_fingerprint,
+                PaperChunk.embedding_dim == len(query_embedding),
+            )
             .order_by(PaperChunk.chunk_index.asc())
             .all()
         )
@@ -86,10 +94,15 @@ class MySQLVectorStore:
         self,
         db: Session,
         query_embedding: list[float],
+        embedding_fingerprint: str,
         scope: str | None = None,
         limit: int = 5,
     ) -> list[ResearchMemory]:
-        query = db.query(ResearchMemory).filter(ResearchMemory.status == "active")
+        query = db.query(ResearchMemory).filter(
+            ResearchMemory.status == "active",
+            ResearchMemory.embedding_fingerprint == embedding_fingerprint,
+            ResearchMemory.embedding_dim == len(query_embedding),
+        )
         if scope:
             query = query.filter(ResearchMemory.scope == scope)
         memories = query.order_by(ResearchMemory.updated_at.desc()).all()
@@ -117,110 +130,128 @@ class QdrantVectorStore:
         self.client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
 
     def upsert_chunks(self, chunks: list[PaperChunk]) -> None:
-        ready_chunks = [chunk for chunk in chunks if chunk.embedding]
-        if not ready_chunks:
-            return
-
-        vector_size = self.vector_size or len(ready_chunks[0].embedding or [])
-        self.ensure_collection(self.collection, vector_size)
-        points = [
-            qmodels.PointStruct(
-                id=chunk.id,
-                vector=chunk.embedding,
-                payload={
-                    "paper_id": chunk.paper_id,
-                    "chunk_id": chunk.id,
-                    "chunk_index": chunk.chunk_index,
-                    "page_start": chunk.page_start,
-                    "page_end": chunk.page_end,
-                    "section_label": chunk.section_label,
-                },
-            )
-            for chunk in ready_chunks
-        ]
-        self.client.upsert(collection_name=self.collection, points=points)
+        fingerprints = {chunk.embedding_fingerprint for chunk in chunks if chunk.embedding and chunk.embedding_fingerprint}
+        for fingerprint in fingerprints:
+            ready_chunks = [
+                chunk for chunk in chunks if chunk.embedding and chunk.embedding_fingerprint == fingerprint
+            ]
+            vector_size = self.vector_size or len(ready_chunks[0].embedding or [])
+            collection = self.collection_for(self.collection, fingerprint)
+            self.ensure_collection(collection, vector_size)
+            points = [
+                qmodels.PointStruct(
+                    id=chunk.id,
+                    vector=chunk.embedding,
+                    payload={
+                        "paper_id": chunk.paper_id,
+                        "chunk_id": chunk.id,
+                        "chunk_index": chunk.chunk_index,
+                        "page_start": chunk.page_start,
+                        "page_end": chunk.page_end,
+                        "section_label": chunk.section_label,
+                        "embedding_fingerprint": fingerprint,
+                    },
+                )
+                for chunk in ready_chunks
+            ]
+            self.client.upsert(collection_name=collection, points=points)
 
     def delete_paper_chunks(self, paper_id: str) -> None:
-        if not self.client.collection_exists(collection_name=self.collection):
-            return
-        self.client.delete(
-            collection_name=self.collection,
-            points_selector=qmodels.FilterSelector(filter=self.paper_filter(paper_id)),
-        )
+        for collection in self.namespaced_collections(self.collection):
+            self.client.delete(
+                collection_name=collection,
+                points_selector=qmodels.FilterSelector(filter=self.paper_filter(paper_id)),
+            )
 
     def search_paper_chunks(
         self,
         db: Session,
         paper_id: str,
         query_embedding: list[float],
+        embedding_fingerprint: str,
         limit: int = 4,
     ) -> list[PaperChunk]:
         if not query_embedding:
             return []
 
-        self.ensure_collection(self.collection, self.vector_size or len(query_embedding))
-        points = self.query_points(self.collection, query_embedding, limit, self.paper_filter(paper_id))
+        collection = self.collection_for(self.collection, embedding_fingerprint)
+        if not self.client.collection_exists(collection_name=collection):
+            return []
+        points = self.query_points(collection, query_embedding, limit, self.paper_filter(paper_id))
         chunk_ids = [self.extract_chunk_id(point) for point in points]
         chunk_ids = [chunk_id for chunk_id in chunk_ids if chunk_id]
         if not chunk_ids:
             return []
 
-        chunks = db.query(PaperChunk).filter(PaperChunk.id.in_(chunk_ids)).all()
+        chunks = db.query(PaperChunk).filter(
+            PaperChunk.id.in_(chunk_ids),
+            PaperChunk.embedding_fingerprint == embedding_fingerprint,
+            PaperChunk.embedding_dim == len(query_embedding),
+        ).all()
         chunks_by_id = {chunk.id: chunk for chunk in chunks}
         ordered_chunks = [chunks_by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in chunks_by_id]
         return ordered_chunks
 
     def upsert_memories(self, memories: list[ResearchMemory]) -> None:
-        ready_memories = [memory for memory in memories if memory.embedding]
-        if not ready_memories:
-            return
-
-        vector_size = self.vector_size or len(ready_memories[0].embedding or [])
-        self.ensure_collection(self.memory_collection, vector_size)
-        points = [
-            qmodels.PointStruct(
-                id=memory.id,
-                vector=memory.embedding,
-                payload={
-                    "memory_id": memory.id,
-                    "scope": memory.scope,
-                    "memory_type": memory.memory_type,
-                    "project_id": memory.project_id,
-                    "paper_id": memory.paper_id,
-                    "importance": memory.importance,
-                    "source": memory.source,
-                },
-            )
-            for memory in ready_memories
-        ]
-        self.client.upsert(collection_name=self.memory_collection, points=points)
+        fingerprints = {memory.embedding_fingerprint for memory in memories if memory.embedding and memory.embedding_fingerprint}
+        for fingerprint in fingerprints:
+            ready_memories = [
+                memory for memory in memories if memory.embedding and memory.embedding_fingerprint == fingerprint
+            ]
+            vector_size = self.vector_size or len(ready_memories[0].embedding or [])
+            collection = self.collection_for(self.memory_collection, fingerprint)
+            self.ensure_collection(collection, vector_size)
+            points = [
+                qmodels.PointStruct(
+                    id=memory.id,
+                    vector=memory.embedding,
+                    payload={
+                        "memory_id": memory.id,
+                        "scope": memory.scope,
+                        "memory_type": memory.memory_type,
+                        "project_id": memory.project_id,
+                        "paper_id": memory.paper_id,
+                        "importance": memory.importance,
+                        "source": memory.source,
+                        "embedding_fingerprint": fingerprint,
+                    },
+                )
+                for memory in ready_memories
+            ]
+            self.client.upsert(collection_name=collection, points=points)
 
     def delete_memory(self, memory_id: str) -> None:
-        if not self.client.collection_exists(collection_name=self.memory_collection):
-            return
-        self.client.delete(
-            collection_name=self.memory_collection,
-            points_selector=qmodels.FilterSelector(filter=self.memory_id_filter(memory_id)),
-        )
+        for collection in self.namespaced_collections(self.memory_collection):
+            self.client.delete(
+                collection_name=collection,
+                points_selector=qmodels.FilterSelector(filter=self.memory_id_filter(memory_id)),
+            )
 
     def search_memories(
         self,
         db: Session,
         query_embedding: list[float],
+        embedding_fingerprint: str,
         scope: str | None = None,
         limit: int = 5,
     ) -> list[ResearchMemory]:
         if not query_embedding:
             return []
 
-        self.ensure_collection(self.memory_collection, self.vector_size or len(query_embedding))
-        points = self.query_points(self.memory_collection, query_embedding, limit, self.memory_scope_filter(scope))
+        collection = self.collection_for(self.memory_collection, embedding_fingerprint)
+        if not self.client.collection_exists(collection_name=collection):
+            return []
+        points = self.query_points(collection, query_embedding, limit, self.memory_scope_filter(scope))
         memory_ids = [self.extract_memory_id(point) for point in points]
         memory_ids = [memory_id for memory_id in memory_ids if memory_id]
         if not memory_ids:
             return []
 
-        memories = db.query(ResearchMemory).filter(ResearchMemory.id.in_(memory_ids)).all()
+        memories = db.query(ResearchMemory).filter(
+            ResearchMemory.id.in_(memory_ids),
+            ResearchMemory.embedding_fingerprint == embedding_fingerprint,
+            ResearchMemory.embedding_dim == len(query_embedding),
+        ).all()
         memories_by_id = {memory.id: memory for memory in memories if memory.status == "active"}
         return [memories_by_id[memory_id] for memory_id in memory_ids if memory_id in memories_by_id]
 
@@ -231,6 +262,15 @@ class QdrantVectorStore:
             collection_name=collection_name,
             vectors_config=qmodels.VectorParams(size=vector_size, distance=qmodels.Distance.COSINE),
         )
+
+    @staticmethod
+    def collection_for(base_name: str, embedding_fingerprint: str) -> str:
+        suffix = hashlib.sha256(embedding_fingerprint.encode("utf-8")).hexdigest()[:12]
+        return f"{base_name}_{suffix}"
+
+    def namespaced_collections(self, base_name: str) -> list[str]:
+        response = self.client.get_collections()
+        return [item.name for item in response.collections if item.name.startswith(f"{base_name}_")]
 
     def query_points(
         self,
@@ -335,10 +375,13 @@ class FallbackVectorStore:
         db: Session,
         paper_id: str,
         query_embedding: list[float],
+        embedding_fingerprint: str,
         limit: int = 4,
     ) -> list[PaperChunk]:
         try:
-            results = self.primary.search_paper_chunks(db, paper_id, query_embedding, limit)
+            results = self.primary.search_paper_chunks(
+                db, paper_id, query_embedding, embedding_fingerprint, limit
+            )
             if results:
                 return results
             record_fallback(
@@ -354,7 +397,9 @@ class FallbackVectorStore:
                 str(exc),
                 {"primary": self.primary.name, "paper_id": paper_id, "limit": limit},
             )
-        return self.fallback.search_paper_chunks(db, paper_id, query_embedding, limit)
+        return self.fallback.search_paper_chunks(
+            db, paper_id, query_embedding, embedding_fingerprint, limit
+        )
 
     def upsert_memories(self, memories: list[ResearchMemory]) -> None:
         try:
@@ -384,11 +429,14 @@ class FallbackVectorStore:
         self,
         db: Session,
         query_embedding: list[float],
+        embedding_fingerprint: str,
         scope: str | None = None,
         limit: int = 5,
     ) -> list[ResearchMemory]:
         try:
-            results = self.primary.search_memories(db, query_embedding, scope, limit)
+            results = self.primary.search_memories(
+                db, query_embedding, embedding_fingerprint, scope, limit
+            )
             if results:
                 return results
             record_fallback(
@@ -404,7 +452,9 @@ class FallbackVectorStore:
                 str(exc),
                 {"primary": self.primary.name, "scope": scope, "limit": limit},
             )
-        return self.fallback.search_memories(db, query_embedding, scope, limit)
+        return self.fallback.search_memories(
+            db, query_embedding, embedding_fingerprint, scope, limit
+        )
 
 
 @lru_cache
