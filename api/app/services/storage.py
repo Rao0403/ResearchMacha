@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import UploadFile
+from pypdf import PdfReader
 
 from app.core.config import get_settings
 
@@ -28,9 +29,20 @@ def save_upload_file(file: UploadFile) -> str:
 def save_remote_pdf(url: str, filename: str) -> str:
     ensure_storage_dirs()
     destination = settings.resolved_upload_dir / filename
-    with httpx.stream("GET", url, timeout=120, follow_redirects=True) as response:
-        response.raise_for_status()
-        with destination.open("wb") as handle:
-            for chunk in response.iter_bytes():
-                handle.write(chunk)
+    staged = settings.resolved_upload_dir / f"{uuid.uuid4()}.part"
+    try:
+        with httpx.stream("GET", url, timeout=120, follow_redirects=True) as response:
+            response.raise_for_status()
+            with staged.open("wb") as handle:
+                for chunk in response.iter_bytes():
+                    handle.write(chunk)
+        with staged.open("rb") as handle:
+            if b"%PDF-" not in handle.read(1024):
+                raise ValueError("Remote response is not a PDF")
+        if not PdfReader(staged).pages:
+            raise ValueError("Remote PDF contains no pages")
+        staged.replace(destination)
+    except Exception:
+        staged.unlink(missing_ok=True)
+        raise
     return str(destination)

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal
-from app.models.paper import Job
+from app.models.paper import Job, ResearchProject
 from app.models.states import JobStatus
 
 logger = logging.getLogger("research_macha.jobs")
@@ -122,6 +122,11 @@ def fail_running_job(
         job.finished_at = utc_now()
         job.lease_expires_at = None
         db.add(job)
+        if job.project_id:
+            project = db.get(ResearchProject, job.project_id)
+            if project is not None:
+                project.status = "blocked" if job.job_type in {"import", "analysis"} else "failed"
+                db.add(project)
         db.commit()
 
 

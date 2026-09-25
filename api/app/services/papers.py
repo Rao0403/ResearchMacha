@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.paper import ChatSession, Paper
-from app.services.arxiv import ArxivEntry
+from app.services.arxiv import ArxivEntry, normalize_arxiv_id
 from app.services.storage import save_remote_pdf
 
 
@@ -15,16 +15,21 @@ def get_paper_or_404(db: Session, paper_id: str) -> Paper:
 
 
 def create_or_update_paper_from_arxiv(db: Session, entry: ArxivEntry) -> tuple[Paper, bool]:
-    paper = db.query(Paper).filter(Paper.arxiv_id == entry.arxiv_id).one_or_none()
+    normalized_id = normalize_arxiv_id(entry.arxiv_id)
+    source_key = f"arxiv:{normalized_id}"
+    paper = db.query(Paper).filter(Paper.source_key == source_key).one_or_none()
     if paper is None:
-        pdf_path = save_remote_pdf(entry.pdf_url, f"{entry.arxiv_id}.pdf")
+        paper = db.query(Paper).filter(Paper.arxiv_id == normalized_id).order_by(Paper.created_at.asc()).first()
+    if paper is None:
+        pdf_path = save_remote_pdf(entry.pdf_url, f"{normalized_id.replace('/', '_')}.pdf")
         paper = Paper(
             source="arxiv",
             title=entry.title,
             authors=entry.authors,
             abstract=entry.abstract,
             year=entry.year,
-            arxiv_id=entry.arxiv_id,
+            arxiv_id=normalized_id,
+            source_key=source_key,
             pdf_path=pdf_path,
             status="queued",
         )
@@ -37,8 +42,10 @@ def create_or_update_paper_from_arxiv(db: Session, entry: ArxivEntry) -> tuple[P
     paper.authors = entry.authors
     paper.abstract = entry.abstract
     paper.year = entry.year
+    paper.arxiv_id = normalized_id
+    paper.source_key = source_key
     if not paper.pdf_path:
-        paper.pdf_path = save_remote_pdf(entry.pdf_url, f"{entry.arxiv_id}.pdf")
+        paper.pdf_path = save_remote_pdf(entry.pdf_url, f"{normalized_id.replace('/', '_')}.pdf")
     db.add(paper)
     db.commit()
     db.refresh(paper)

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.services import storage
 
@@ -19,7 +20,7 @@ class FakeResponse:
         return None
 
     def iter_bytes(self):
-        yield b"%PDF"
+        yield b"%PDF-1.7"
 
 
 def test_save_remote_pdf_follows_redirects(monkeypatch, tmp_path) -> None:
@@ -31,8 +32,9 @@ def test_save_remote_pdf_follows_redirects(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(storage, "settings", FakeSettings(tmp_path))
     monkeypatch.setattr(storage.httpx, "stream", fake_stream)
+    monkeypatch.setattr(storage, "PdfReader", lambda path: SimpleNamespace(pages=[object()]))
 
     saved_path = storage.save_remote_pdf("https://arxiv.org/pdf/2606.05868v1.pdf", "paper.pdf")
 
-    assert Path(saved_path).read_bytes() == b"%PDF"
+    assert Path(saved_path).read_bytes() == b"%PDF-1.7"
     assert calls[0]["follow_redirects"] is True

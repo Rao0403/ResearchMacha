@@ -115,3 +115,10 @@ def parse_feed(xml_text: str) -> list[ArxivEntry]:
 
 def normalize_whitespace(value: str) -> str:
     return " ".join(value.split())
+
+
+def normalize_arxiv_id(value: str) -> str:
+    normalized = value.strip().lower()
+    normalized = re.sub(r"^https?://arxiv\.org/(?:abs|pdf)/", "", normalized)
+    normalized = normalized.removesuffix(".pdf")
+    return re.sub(r"v\d+$", "", normalized)

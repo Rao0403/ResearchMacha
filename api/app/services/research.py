@@ -5,11 +5,13 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session, selectinload
 
 from app.ai import BatchSummary, MockProvider, ResearchBrief, get_ai_provider
 from app.core.database import SessionLocal
-from app.models.paper import AgentRun, Job, Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
+from app.models.paper import AgentRun, AgentStep, Job, Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
 from app.models.states import JobStatus
 from app.schemas.memory import ResearchMemoryRead
 from app.schemas.paper import LibraryPaperRead
@@ -300,17 +302,34 @@ def import_selected_candidates(
     candidate_ids: list[str],
     agent_run: AgentRun | None = None,
 ) -> ResearchProject:
-    project = get_project_or_404(db, project_id)
+    project = db.execute(
+        select(ResearchProject).where(ResearchProject.id == project_id).with_for_update()
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Research project not found")
+    project_candidates = db.query(ResearchCandidate).filter(
+        ResearchCandidate.project_id == project_id
+    ).all()
     if not candidate_ids:
-        candidate_ids = [candidate.id for candidate in project.candidates if candidate.selected]
+        candidate_ids = [candidate.id for candidate in project_candidates if candidate.selected]
+    candidate_ids = list(dict.fromkeys(candidate_ids))
     if not candidate_ids:
         raise HTTPException(status_code=400, detail="Select at least one candidate to import")
 
-    candidates = db.query(ResearchCandidate).filter(ResearchCandidate.project_id == project_id, ResearchCandidate.id.in_(candidate_ids)).all()
-    if not candidates:
-        raise HTTPException(status_code=404, detail="No matching candidates found")
+    candidates_by_id = {candidate.id: candidate for candidate in project_candidates}
+    unknown_ids = [candidate_id for candidate_id in candidate_ids if candidate_id not in candidates_by_id]
+    if unknown_ids:
+        raise HTTPException(status_code=400, detail={"message": "Candidates do not belong to this project", "candidate_ids": unknown_ids})
+    candidates = [candidates_by_id[candidate_id] for candidate_id in candidate_ids]
+    existing_approved_ids = {
+        candidate_id
+        for (candidate_id,) in db.query(Job.candidate_id)
+        .filter(Job.project_id == project_id, Job.job_type == "import", Job.candidate_id.is_not(None))
+        .all()
+    }
+    if len(existing_approved_ids | set(candidate_ids)) > 5:
+        raise HTTPException(status_code=400, detail="A project can have at most five approved candidates")
 
-    queued_jobs: list[dict[str, Any]] = []
     for candidate in candidates:
         candidate.selected = True
         key = f"import:{project_id}:{candidate.id}"
@@ -325,11 +344,14 @@ def import_selected_candidates(
                 payload={"arxiv_id": candidate.arxiv_id},
             )
             db.add(job)
-        queued_jobs.append({"candidate_id": candidate.id, "job_id": job.id, "status": job.status})
 
     project.status = "importing"
     db.add(project)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+    reconcile_workflow_trace_steps(db, project_id, agent_run)
     return get_project_or_404(db, project_id)
 
 
@@ -380,6 +402,10 @@ def process_import_job(
         if heartbeat:
             heartbeat()
         analysis_job = enqueue_analysis_job(db, paper.id, auto_reset=True)
+        if analysis_job.project_id is None:
+            analysis_job.project_id = project.id
+            analysis_job.candidate_id = candidate.id
+            db.add(analysis_job)
         job = db.get(Job, job_id)
         if job is not None:
             job.status = JobStatus.COMPLETED
@@ -394,8 +420,101 @@ def process_import_job(
             project.status = "analyzing"
             db.add(project)
         db.commit()
+        reconcile_workflow_trace_steps(db, project.id, latest_agent_run(db, project.id))
     finally:
         db.close()
+
+
+def retry_job(db: Session, job_id: str) -> Job:
+    job = db.execute(select(Job).where(Job.id == job_id).with_for_update()).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+        return job
+    if job.status not in {JobStatus.FAILED, JobStatus.COMPLETED_WITH_WARNINGS}:
+        raise HTTPException(status_code=409, detail="Only failed or warning-completed jobs can be retried")
+    if job.job_type == "import" and (
+        job.project_id is None
+        or job.candidate_id is None
+        or db.get(ResearchProject, job.project_id) is None
+        or db.get(ResearchCandidate, job.candidate_id) is None
+    ):
+        raise HTTPException(status_code=409, detail="Import target no longer exists")
+    if job.job_type == "analysis" and (job.paper_id is None or db.get(Paper, job.paper_id) is None):
+        raise HTTPException(status_code=409, detail="Analysis target no longer exists")
+    if job.job_type == "synthesis" and (job.project_id is None or db.get(ResearchProject, job.project_id) is None):
+        raise HTTPException(status_code=409, detail="Synthesis target no longer exists")
+    if job.job_type not in {"import", "analysis", "synthesis"}:
+        raise HTTPException(status_code=409, detail="This job type cannot be retried")
+    job.status = JobStatus.QUEUED
+    job.error_message = None
+    job.warning_message = None
+    job.worker_id = None
+    job.claimed_at = None
+    job.lease_expires_at = None
+    job.started_at = None
+    job.finished_at = None
+    job.attempt_count = 0
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    if job.project_id:
+        reconcile_workflow_trace_steps(db, job.project_id, latest_agent_run(db, job.project_id))
+    return job
+
+
+def reconcile_workflow_trace_steps(
+    db: Session,
+    project_id: str,
+    agent_run: AgentRun | None,
+) -> None:
+    if agent_run is None:
+        return
+    definitions = (
+        ("import_papers", ["import"]),
+        ("analyze_papers", ["analysis"]),
+    )
+    for tool_name, job_types in definitions:
+        jobs = db.query(Job).filter(Job.project_id == project_id, Job.job_type.in_(job_types)).order_by(Job.created_at).all()
+        if not jobs:
+            continue
+        step = db.query(AgentStep).filter(
+            AgentStep.run_id == agent_run.id,
+            AgentStep.tool_name == tool_name,
+        ).order_by(AgentStep.position.asc()).first()
+        if step is None:
+            position = (db.query(func.max(AgentStep.position)).filter(AgentStep.run_id == agent_run.id).scalar() or 0) + 1
+            step = AgentStep(
+                run_id=agent_run.id,
+                project_id=project_id,
+                position=position,
+                tool_name=tool_name,
+                status="running",
+                input_json={"job_ids": [job.id for job in jobs]},
+            )
+        statuses = {job.status for job in jobs}
+        if JobStatus.FAILED in statuses:
+            step.status = "failed"
+            step.error_message = "One or more durable jobs failed."
+            step.finished_at = now()
+        elif statuses <= {JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_WARNINGS, JobStatus.CANCELLED}:
+            step.status = "completed"
+            step.finished_at = now()
+        else:
+            step.status = "running"
+            step.finished_at = None
+            step.error_message = None
+        step.output_json = {
+            "jobs": [
+                {"job_id": job.id, "target_id": job.paper_id or job.candidate_id, "status": job.status}
+                for job in jobs
+            ]
+        }
+        db.add(step)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
 
 
 def enqueue_synthesis_job(db: Session, project_id: str) -> Job:
@@ -737,6 +856,7 @@ def remember_candidate_decisions(db: Session, project_id: str, approved_candidat
                 },
                 importance=3 if accepted else 2,
                 source="approval",
+                dedupe_key=f"approval:{project.id}:{candidate.id}",
             )
 
         if selected_candidates:
@@ -758,6 +878,7 @@ def remember_candidate_decisions(db: Session, project_id: str, approved_candidat
                 metadata_json=profile,
                 importance=3,
                 source="approval",
+                dedupe_key=f"approval-preference:{project.id}",
             )
     except Exception as exc:  # noqa: BLE001
         db.rollback()
