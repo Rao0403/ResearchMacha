@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -46,7 +46,6 @@ def search_papers(q: str = Query(..., min_length=2, max_length=200)) -> list[Pap
 @router.post("/papers/import/arxiv", response_model=UploadPaperResponse)
 def import_arxiv_paper(
     payload: ArxivImportRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> UploadPaperResponse:
     try:
@@ -54,13 +53,12 @@ def import_arxiv_paper(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     paper, _ = create_or_update_paper_from_arxiv(db, entry)
-    job = enqueue_analysis_job(db, paper.id, background_tasks, auto_reset=True)
+    job = enqueue_analysis_job(db, paper.id, auto_reset=True)
     return UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job)
 
 
 @router.post("/papers/upload", response_model=UploadPaperResponse)
 def upload_paper(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: str | None = Form(None),
     authors: str | None = Form(None),
@@ -72,13 +70,12 @@ def upload_paper(
     stored_path = save_upload_file(file)
     author_list = [part.strip() for part in (authors or "").split(",") if part.strip()]
     paper = create_uploaded_paper(db, title=title or Path(file.filename or "uploaded-paper").stem, authors=author_list, pdf_path=stored_path)
-    job = enqueue_analysis_job(db, paper.id, background_tasks, auto_reset=True)
+    job = enqueue_analysis_job(db, paper.id, auto_reset=True)
     return UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job)
 
 
 @router.post("/papers/batch-upload", response_model=BatchUploadResponse)
 def batch_upload_papers(
-    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
 ) -> BatchUploadResponse:
@@ -91,7 +88,7 @@ def batch_upload_papers(
             raise HTTPException(status_code=400, detail=f"Only PDF uploads are supported: {file.filename}")
         stored_path = save_upload_file(file)
         paper = create_uploaded_paper(db, title=Path(file.filename or "uploaded-paper").stem, authors=[], pdf_path=stored_path)
-        job = enqueue_analysis_job(db, paper.id, background_tasks, auto_reset=True)
+        job = enqueue_analysis_job(db, paper.id, auto_reset=True)
         items.append(UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job))
 
     return BatchUploadResponse(items=items)
@@ -118,9 +115,9 @@ def get_paper(paper_id: str, db: Session = Depends(get_db)) -> Paper:
 
 
 @router.post("/papers/{paper_id}/analyze", response_model=JobRead)
-def analyze_paper(paper_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> Job:
+def analyze_paper(paper_id: str, db: Session = Depends(get_db)) -> Job:
     get_paper_or_404(db, paper_id)
-    return enqueue_analysis_job(db, paper_id, background_tasks, auto_reset=True)
+    return enqueue_analysis_job(db, paper_id, auto_reset=True)
 
 
 @router.get("/papers/{paper_id}/summary", response_model=PaperSummaryResponse)

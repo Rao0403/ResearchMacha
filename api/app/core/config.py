@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     database_url: str | None = None
 
     upload_dir: str = "api/uploads"
+    job_worker_enabled: bool = True
+    job_worker_concurrency: int = 1
+    job_worker_poll_seconds: float = 1
+    job_lease_seconds: int = 1800
+    job_max_reclaims: int = 3
     embedding_dim: int = 64
     vector_provider: str = "qdrant"
     qdrant_url: str = "http://localhost:6333"

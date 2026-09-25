@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
@@ -11,6 +11,7 @@ from app.services.research import (
     discover_candidates,
     get_project_or_404,
     get_workflow_status,
+    enqueue_synthesis_job,
     import_selected_candidates,
     list_projects,
     plan_project,
@@ -32,10 +33,9 @@ def start_workflow(payload: ResearchProjectCreate, db: Session = Depends(get_db)
 def approve_workflow(
     project_id: str,
     payload: CandidateSelectionRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> ResearchProjectRead:
-    return serialize_project(approve_research_workflow(db, project_id, payload.candidate_ids, background_tasks))
+    return serialize_project(approve_research_workflow(db, project_id, payload.candidate_ids))
 
 
 @router.get("/research-workflows/{project_id}", response_model=ResearchProjectRead)
@@ -78,15 +78,15 @@ def discover_research_candidates(project_id: str, db: Session = Depends(get_db))
 def import_research_candidates(
     project_id: str,
     payload: CandidateSelectionRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> ResearchProjectRead:
-    return serialize_project(import_selected_candidates(db, project_id, payload.candidate_ids, background_tasks))
+    return serialize_project(import_selected_candidates(db, project_id, payload.candidate_ids))
 
 
 @router.post("/research-projects/{project_id}/synthesize", response_model=ResearchProjectRead)
 def synthesize_research_project(project_id: str, db: Session = Depends(get_db)) -> ResearchProjectRead:
-    return serialize_project(synthesize_project(db, project_id))
+    enqueue_synthesis_job(db, project_id)
+    return serialize_project(get_project_or_404(db, project_id))
 
 
 @router.get("/research-projects/{project_id}/brief", response_model=dict)

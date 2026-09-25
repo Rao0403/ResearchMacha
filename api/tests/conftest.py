@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.deps import get_db
 from app.core.database import Base
 from app.main import app
+from app import main
 from app.services import storage
 
 
@@ -36,6 +37,7 @@ def api_client(db_session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path) -
         yield db_session
 
     monkeypatch.setattr(storage, "settings", SimpleNamespace(resolved_upload_dir=tmp_path))
+    monkeypatch.setattr(main.settings, "job_worker_enabled", False)
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as client:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -16,7 +17,7 @@ from app.services.retrieval import retrieve_paper_chunks
 from app.services.vector_store import get_vector_store
 
 
-def enqueue_analysis_job(db: Session, paper_id: str, background_tasks: BackgroundTasks, auto_reset: bool) -> Job:
+def enqueue_analysis_job(db: Session, paper_id: str, auto_reset: bool) -> Job:
     paper = db.get(Paper, paper_id)
     if paper is None:
         raise HTTPException(status_code=404, detail="Paper not found")
@@ -34,12 +35,16 @@ def enqueue_analysis_job(db: Session, paper_id: str, background_tasks: Backgroun
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(process_analysis_job, job.id)
     return job
 
 
-def process_analysis_job(job_id: str) -> None:
-    db = SessionLocal()
+def process_analysis_job(
+    job_id: str,
+    *,
+    heartbeat: Callable[[], bool] | None = None,
+    session_factory: Callable[[], Session] = SessionLocal,
+) -> None:
+    db = session_factory()
     try:
         job = db.get(Job, job_id)
         if job is None:
@@ -55,8 +60,12 @@ def process_analysis_job(job_id: str) -> None:
         db.add_all([job, paper])
         db.commit()
 
+        if heartbeat:
+            heartbeat()
         pages = extract_pdf_pages(paper.pdf_path)
         chunks = chunk_pages(pages)
+        if heartbeat:
+            heartbeat()
         clear_fallback_events()
         provider = get_ai_provider()
         embedding_result = None
@@ -88,8 +97,10 @@ def process_analysis_job(job_id: str) -> None:
                     embedding_fingerprint=embedding_result.fingerprint if embedding_result is not None else None,
                     embedding_dim=embedding_result.dimension if embedding_result is not None else None,
                 )
-            )
+                )
 
+        if heartbeat:
+            heartbeat()
         db.commit()
 
         stored_chunks = (
@@ -99,6 +110,8 @@ def process_analysis_job(job_id: str) -> None:
             .all()
         )
         get_vector_store().upsert_chunks(stored_chunks)
+        if heartbeat:
+            heartbeat()
         chunk_payload = [
             {
                 "id": chunk.id,
@@ -110,6 +123,8 @@ def process_analysis_job(job_id: str) -> None:
             for chunk in stored_chunks
         ]
         summary_payload = provider.generate_summary(paper.title, chunk_payload)
+        if heartbeat:
+            heartbeat()
         fallback_events = pop_fallback_events()
 
         db.add(
@@ -138,6 +153,7 @@ def process_analysis_job(job_id: str) -> None:
 
         paper.status = "ready"
         job.status = "completed"
+        job.lease_expires_at = None
         if fallback_events:
             job.payload = {"fallback_used": True, "fallbacks": fallback_events}
         job.finished_at = now()
@@ -165,6 +181,7 @@ def process_analysis_job(job_id: str) -> None:
             job.status = "failed"
             job.error_message = str(exc)
             job.finished_at = now()
+            job.lease_expires_at = None
             db.add(job)
         if job is not None:
             paper = db.get(Paper, job.paper_id)

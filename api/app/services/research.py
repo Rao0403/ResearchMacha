@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 from sqlalchemy.orm import Session, object_session, selectinload
 
 from app.ai import BatchSummary, MockProvider, ResearchBrief, get_ai_provider
-from app.models.paper import AgentRun, Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
+from app.core.database import SessionLocal
+from app.models.paper import AgentRun, Job, Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
+from app.models.states import JobStatus
 from app.schemas.memory import ResearchMemoryRead
 from app.schemas.paper import LibraryPaperRead
 from app.schemas.research import AgentRunRead, AgentStepRead, ResearchCandidateRead, ResearchProjectRead
@@ -20,7 +23,7 @@ from app.services.agent_trace import (
     start_agent_step,
     summarize_candidates_for_trace,
 )
-from app.services.analysis import enqueue_analysis_job
+from app.services.analysis import enqueue_analysis_job, now
 from app.services.arxiv import ArxivEntry, fetch_arxiv_entry, search_arxiv
 from app.services.fallbacks import record_fallback
 from app.services.memory import create_memory, latest_memories, memory_payload, retrieve_memories
@@ -295,7 +298,6 @@ def import_selected_candidates(
     db: Session,
     project_id: str,
     candidate_ids: list[str],
-    background_tasks: BackgroundTasks,
     agent_run: AgentRun | None = None,
 ) -> ResearchProject:
     project = get_project_or_404(db, project_id)
@@ -308,38 +310,22 @@ def import_selected_candidates(
     if not candidates:
         raise HTTPException(status_code=404, detail="No matching candidates found")
 
-    import_step = start_agent_step(
-        db,
-        agent_run,
-        "import_papers",
-        {"candidate_ids": candidate_ids, "candidate_count": len(candidates)},
-    )
-    analyze_step = None
-    imported_papers: list[dict[str, Any]] = []
     queued_jobs: list[dict[str, Any]] = []
     for candidate in candidates:
-        entry = fetch_arxiv_entry(candidate.arxiv_id)
-        paper, _ = create_or_update_paper_from_arxiv(db, entry)
-        imported_papers.append({"paper_id": paper.id, "arxiv_id": candidate.arxiv_id, "title": paper.title})
         candidate.selected = True
-        link_exists = (
-            db.query(ResearchProjectPaper)
-            .filter(ResearchProjectPaper.project_id == project_id, ResearchProjectPaper.paper_id == paper.id)
-            .first()
-        )
-        if link_exists is None:
-            db.add(ResearchProjectPaper(project_id=project_id, paper_id=paper.id, role="evidence"))
-        job = enqueue_analysis_job(db, paper.id, background_tasks, auto_reset=True)
-        queued_jobs.append({"paper_id": paper.id, "job_id": job.id, "status": job.status})
-
-    complete_agent_step(db, import_step, {"imported_papers": imported_papers})
-    analyze_step = start_agent_step(
-        db,
-        agent_run,
-        "analyze_papers",
-        {"paper_ids": [item["paper_id"] for item in imported_papers]},
-    )
-    complete_agent_step(db, analyze_step, {"queued_jobs": queued_jobs})
+        key = f"import:{project_id}:{candidate.id}"
+        job = db.query(Job).filter(Job.idempotency_key == key).one_or_none()
+        if job is None:
+            job = Job(
+                project_id=project_id,
+                candidate_id=candidate.id,
+                job_type="import",
+                status=JobStatus.QUEUED,
+                idempotency_key=key,
+                payload={"arxiv_id": candidate.arxiv_id},
+            )
+            db.add(job)
+        queued_jobs.append({"candidate_id": candidate.id, "job_id": job.id, "status": job.status})
 
     project.status = "importing"
     db.add(project)
@@ -351,18 +337,122 @@ def approve_research_workflow(
     db: Session,
     project_id: str,
     candidate_ids: list[str],
-    background_tasks: BackgroundTasks,
 ) -> ResearchProject:
     agent_run = latest_agent_run(db, project_id) or create_agent_run(db, project_id, f"Approve papers for project {project_id}")
     existing_project = get_project_or_404(db, project_id)
     effective_candidate_ids = candidate_ids or [candidate.id for candidate in existing_project.candidates if candidate.selected]
-    project = import_selected_candidates(db, project_id, candidate_ids, background_tasks, agent_run)
-    project.status = "analyzing"
-    db.add(project)
-    db.commit()
+    project = import_selected_candidates(db, project_id, candidate_ids, agent_run)
     remember_candidate_decisions(db, project_id, effective_candidate_ids)
     set_agent_run_status(db, agent_run, project.status)
     return get_project_or_404(db, project_id)
+
+
+def process_import_job(
+    job_id: str,
+    *,
+    heartbeat: Callable[[], bool] | None = None,
+    session_factory: Callable[[], Session] = SessionLocal,
+) -> None:
+    db = session_factory()
+    try:
+        job = db.get(Job, job_id)
+        if job is None or job.status != JobStatus.RUNNING:
+            return
+        candidate = db.get(ResearchCandidate, job.candidate_id)
+        project = db.get(ResearchProject, job.project_id)
+        if candidate is None or project is None:
+            raise RuntimeError("Import target no longer exists")
+
+        entry = fetch_arxiv_entry(candidate.arxiv_id)
+        if heartbeat:
+            heartbeat()
+        paper, _ = create_or_update_paper_from_arxiv(db, entry)
+        link = db.query(ResearchProjectPaper).filter(
+            ResearchProjectPaper.project_id == project.id,
+            ResearchProjectPaper.paper_id == paper.id,
+        ).one_or_none()
+        if link is None:
+            db.add(ResearchProjectPaper(project_id=project.id, paper_id=paper.id, role="evidence"))
+        candidate.selected = True
+        job.paper_id = paper.id
+        db.add_all([candidate, job])
+        db.commit()
+        if heartbeat:
+            heartbeat()
+        analysis_job = enqueue_analysis_job(db, paper.id, auto_reset=True)
+        job = db.get(Job, job_id)
+        if job is not None:
+            job.status = JobStatus.COMPLETED
+            job.finished_at = now()
+            job.lease_expires_at = None
+            payload = dict(job.payload or {})
+            payload["analysis_job_id"] = analysis_job.id
+            job.payload = payload
+            db.add(job)
+        project = db.get(ResearchProject, project.id)
+        if project is not None:
+            project.status = "analyzing"
+            db.add(project)
+        db.commit()
+    finally:
+        db.close()
+
+
+def enqueue_synthesis_job(db: Session, project_id: str) -> Job:
+    project = get_project_or_404(db, project_id)
+    active = db.query(Job).filter(
+        Job.project_id == project_id,
+        Job.job_type == "synthesis",
+        Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+    ).one_or_none()
+    if active is not None:
+        return active
+    project.synthesis_generation += 1
+    job = Job(
+        project_id=project_id,
+        job_type="synthesis",
+        status=JobStatus.QUEUED,
+        idempotency_key=f"synthesis:{project_id}:{project.synthesis_generation}",
+        requested_generation=project.synthesis_generation,
+    )
+    project.status = "synthesis_queued"
+    db.add_all([project, job])
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def process_synthesis_job(
+    job_id: str,
+    *,
+    heartbeat: Callable[[], bool] | None = None,
+    session_factory: Callable[[], Session] = SessionLocal,
+) -> None:
+    db = session_factory()
+    try:
+        job = db.get(Job, job_id)
+        if job is None or job.status != JobStatus.RUNNING or job.project_id is None:
+            return
+        project = db.get(ResearchProject, job.project_id)
+        if project is None:
+            raise RuntimeError("Synthesis target no longer exists")
+        project.status = "synthesizing"
+        db.add(project)
+        db.commit()
+        if heartbeat:
+            heartbeat()
+        synthesize_project(db, project.id)
+        if heartbeat:
+            heartbeat()
+        job = db.get(Job, job_id)
+        if job is not None:
+            job.status = JobStatus.COMPLETED
+            job.finished_at = now()
+            job.lease_expires_at = None
+            db.add(job)
+            db.commit()
+    finally:
+        db.close()
 
 
 def get_workflow_status(db: Session, project_id: str) -> ResearchProject:
