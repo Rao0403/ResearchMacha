@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -17,6 +17,10 @@ def default_id() -> str:
     return str(uuid.uuid4())
 
 
+def default_legacy_job_key() -> str:
+    return f"legacy-runtime:{default_id()}"
+
+
 class Paper(Base):
     __tablename__ = "papers"
 
@@ -27,8 +31,12 @@ class Paper(Base):
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     arxiv_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_key: Mapped[str | None] = mapped_column(String(191), nullable=True, unique=True)
     pdf_path: Mapped[str] = mapped_column(String(1024))
     status: Mapped[str] = mapped_column(String(32), index=True, default="pending")
+    analysis_generation: Mapped[int] = mapped_column(Integer, default=0)
+    analysis_mode: Mapped[str] = mapped_column(String(32), default="unknown_legacy")
+    analysis_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
     last_opened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -37,7 +45,7 @@ class Paper(Base):
     summary: Mapped["PaperSummary | None"] = relationship(back_populates="paper", cascade="all, delete-orphan")
     highlights: Mapped[list["Highlight"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
     chat_sessions: Mapped[list["ChatSession"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
-    jobs: Mapped[list["Job"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
+    jobs: Mapped[list["Job"]] = relationship(back_populates="paper")
     project_links: Mapped[list["ResearchProjectPaper"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
     memories: Mapped[list["ResearchMemory"]] = relationship(back_populates="paper", cascade="all, delete-orphan")
 
@@ -46,21 +54,35 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
-    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"))
+    paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("research_candidates.id", ondelete="CASCADE"), nullable=True, index=True)
     job_type: Mapped[str] = mapped_column(String(32), default="analysis")
     status: Mapped[str] = mapped_column(String(32), default="queued")
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, default=default_legacy_job_key)
+    requested_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    worker_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    warning_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    paper: Mapped[Paper] = relationship(back_populates="jobs")
+    paper: Mapped[Paper | None] = relationship(back_populates="jobs")
+    project: Mapped["ResearchProject | None"] = relationship(back_populates="jobs")
+    candidate: Mapped["ResearchCandidate | None"] = relationship(back_populates="jobs")
 
 
 class PaperChunk(Base):
     __tablename__ = "paper_chunks"
+    __table_args__ = (
+        UniqueConstraint("paper_id", "analysis_generation", "chunk_index", name="uq_paper_chunks_generation_index"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
     paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"))
@@ -70,6 +92,9 @@ class PaperChunk(Base):
     section_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    analysis_generation: Mapped[int] = mapped_column(Integer, default=1)
+    embedding_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    embedding_dim: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     paper: Mapped[Paper] = relationship(back_populates="chunks")
@@ -87,6 +112,8 @@ class PaperSummary(Base):
     conclusion: Mapped[str] = mapped_column(Text)
     limitations_or_notes: Mapped[str] = mapped_column(Text)
     section_citations: Mapped[dict[str, list[dict[str, str | int]]]] = mapped_column(JSON, default=dict)
+    generation_mode: Mapped[str] = mapped_column(String(32), default="unknown_legacy")
+    warning: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
@@ -128,6 +155,8 @@ class ChatMessage(Base):
     role: Mapped[str] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(Text)
     citations: Mapped[list[dict[str, str | int]]] = mapped_column(JSON, default=list)
+    generation_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    warning: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
@@ -142,6 +171,7 @@ class ResearchProject(Base):
     generated_queries: Mapped[list[str]] = mapped_column(JSON, default=list)
     inclusion_criteria: Mapped[list[str]] = mapped_column(JSON, default=list)
     synthesis_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    synthesis_generation: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
@@ -149,10 +179,12 @@ class ResearchProject(Base):
     papers: Mapped[list["ResearchProjectPaper"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     agent_runs: Mapped[list["AgentRun"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     memories: Mapped[list["ResearchMemory"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    jobs: Mapped[list["Job"]] = relationship(back_populates="project")
 
 
 class ResearchCandidate(Base):
     __tablename__ = "research_candidates"
+    __table_args__ = (UniqueConstraint("project_id", "arxiv_id", name="uq_research_candidates_project_arxiv"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), index=True)
@@ -169,10 +201,12 @@ class ResearchCandidate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     project: Mapped[ResearchProject] = relationship(back_populates="candidates")
+    jobs: Mapped[list[Job]] = relationship(back_populates="candidate")
 
 
 class ResearchProjectPaper(Base):
     __tablename__ = "research_project_papers"
+    __table_args__ = (UniqueConstraint("project_id", "paper_id", name="uq_research_project_papers_project_paper"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), index=True)
@@ -194,6 +228,9 @@ class ResearchMemory(Base):
     importance: Mapped[int] = mapped_column(Integer, default=1)
     metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    embedding_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    embedding_dim: Mapped[int | None] = mapped_column(Integer, nullable=True)
     project_id: Mapped[str | None] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=True, index=True)
     paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=True, index=True)
     source: Mapped[str] = mapped_column(String(64), default="system")
@@ -224,6 +261,7 @@ class AgentRun(Base):
 
 class AgentStep(Base):
     __tablename__ = "agent_steps"
+    __table_args__ = (UniqueConstraint("run_id", "position", name="uq_agent_steps_run_position"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
     run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True)

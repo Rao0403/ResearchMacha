@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.memory import ResearchMemoryRead
-from app.schemas.paper import LibraryPaperRead
+from app.schemas.paper import JobRead, LibraryPaperRead
 
 
 class ResearchProjectCreate(BaseModel):
@@ -80,9 +80,12 @@ class ResearchProjectRead(BaseModel):
     generated_queries: list[str]
     inclusion_criteria: list[str]
     synthesis_json: dict[str, Any] | None
+    synthesis_generation: int
     created_at: datetime
     updated_at: datetime
     candidates: list[ResearchCandidateRead] = Field(default_factory=list)
     papers: list[LibraryPaperRead] = Field(default_factory=list)
     agent_run: AgentRunRead | None = None
     memory_signals: list[ResearchMemoryRead] = Field(default_factory=list)
+    recent_jobs: list[JobRead] = Field(default_factory=list)
+    blocking_items: list[dict[str, Any]] = Field(default_factory=list)

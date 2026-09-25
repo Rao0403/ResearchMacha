@@ -89,6 +89,7 @@ def serialize_project(project: ResearchProject) -> ResearchProjectRead:
         generated_queries=project.generated_queries or [],
         inclusion_criteria=project.inclusion_criteria or [],
         synthesis_json=project.synthesis_json,
+        synthesis_generation=project.synthesis_generation,
         created_at=project.created_at,
         updated_at=project.updated_at,
         candidates=[ResearchCandidateRead.model_validate(candidate) for candidate in sorted(project.candidates, key=lambda item: item.score, reverse=True)],

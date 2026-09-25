@@ -43,7 +43,11 @@ class LibraryPaperRead(BaseModel):
     abstract: str | None
     year: int | None
     arxiv_id: str | None
+    source_key: str | None
     status: str
+    analysis_generation: int
+    analysis_mode: str
+    analysis_warning: str | None
     created_at: datetime
     updated_at: datetime
     last_opened_at: datetime | None
@@ -58,6 +62,7 @@ class PaperChunkRead(BaseModel):
     page_end: int
     section_label: str | None
     text: str
+    analysis_generation: int
 
 
 class PaperSummaryRead(BaseModel):
@@ -70,16 +75,27 @@ class PaperSummaryRead(BaseModel):
     conclusion: str
     limitations_or_notes: str
     section_citations: dict[str, list[Citation]]
+    generation_mode: str
+    warning: str | None
 
 
 class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    paper_id: str
+    paper_id: str | None
+    project_id: str | None
+    candidate_id: str | None
     job_type: str
     status: str
+    idempotency_key: str
+    requested_generation: int | None
+    attempt_count: int
+    worker_id: str | None
+    claimed_at: datetime | None
+    lease_expires_at: datetime | None
     error_message: str | None
+    warning_message: str | None
     payload: dict | None
     created_at: datetime
     updated_at: datetime
