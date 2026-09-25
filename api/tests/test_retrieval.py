@@ -88,6 +88,9 @@ class FailingVectorStore:
     def delete_paper_chunks(self, paper_id):
         raise RuntimeError("primary unavailable")
 
+    def delete_chunks(self, chunks):
+        raise RuntimeError("primary unavailable")
+
     def search_paper_chunks(self, db, paper_id, query_embedding, embedding_fingerprint, limit=4):
         raise RuntimeError("primary unavailable")
 

@@ -28,6 +28,9 @@ class VectorStore(Protocol):
     def delete_paper_chunks(self, paper_id: str) -> None:
         raise NotImplementedError
 
+    def delete_chunks(self, chunks: list[PaperChunk]) -> None:
+        raise NotImplementedError
+
     def search_paper_chunks(
         self,
         db: Session,
@@ -62,6 +65,9 @@ class MySQLVectorStore:
         return None
 
     def delete_paper_chunks(self, paper_id: str) -> None:
+        return None
+
+    def delete_chunks(self, chunks: list[PaperChunk]) -> None:
         return None
 
     def search_paper_chunks(
@@ -162,6 +168,19 @@ class QdrantVectorStore:
                 collection_name=collection,
                 points_selector=qmodels.FilterSelector(filter=self.paper_filter(paper_id)),
             )
+
+    def delete_chunks(self, chunks: list[PaperChunk]) -> None:
+        fingerprints = {chunk.embedding_fingerprint for chunk in chunks if chunk.embedding_fingerprint}
+        for fingerprint in fingerprints:
+            ids = [chunk.id for chunk in chunks if chunk.embedding_fingerprint == fingerprint]
+            if not ids:
+                continue
+            collection = self.collection_for(self.collection, fingerprint)
+            if self.client.collection_exists(collection_name=collection):
+                self.client.delete(
+                    collection_name=collection,
+                    points_selector=qmodels.PointIdsList(points=ids),
+                )
 
     def search_paper_chunks(
         self,
@@ -369,6 +388,18 @@ class FallbackVectorStore:
                 {"primary": self.primary.name, "paper_id": paper_id},
             )
             self.fallback.delete_paper_chunks(paper_id)
+
+    def delete_chunks(self, chunks: list[PaperChunk]) -> None:
+        try:
+            self.primary.delete_chunks(chunks)
+        except Exception as exc:
+            record_fallback(
+                "vector_store.delete_chunks",
+                f"{self.fallback.name}.delete_chunks",
+                str(exc),
+                {"primary": self.primary.name, "chunk_count": len(chunks)},
+            )
+            self.fallback.delete_chunks(chunks)
 
     def search_paper_chunks(
         self,

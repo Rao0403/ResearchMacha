@@ -22,18 +22,27 @@ def create_memory(
     metadata_json: dict[str, Any] | None = None,
     importance: int = 1,
     source: str = "system",
+    dedupe_key: str | None = None,
 ) -> ResearchMemory:
-    memory = ResearchMemory(
-        scope=scope,
-        memory_type=memory_type,
-        text=text,
-        project_id=project_id,
-        paper_id=paper_id,
-        metadata_json=metadata_json or {},
-        importance=importance,
-        source=source,
-        status="active",
+    memory = (
+        db.query(ResearchMemory).filter(ResearchMemory.dedupe_key == dedupe_key).one_or_none()
+        if dedupe_key
+        else None
     )
+    if memory is None:
+        memory = ResearchMemory(dedupe_key=dedupe_key)
+    memory.scope = scope
+    memory.memory_type = memory_type
+    memory.text = text
+    memory.project_id = project_id
+    memory.paper_id = paper_id
+    memory.metadata_json = metadata_json or {}
+    memory.importance = importance
+    memory.source = source
+    memory.status = "active"
+    memory.embedding = None
+    memory.embedding_fingerprint = None
+    memory.embedding_dim = None
     db.add(memory)
     db.flush()
 
@@ -81,6 +90,7 @@ def create_paper_fact_memory(
         metadata_json={"title": title, "sections": sections},
         importance=2,
         source="analysis",
+        dedupe_key=f"paper-fact:{paper_id}",
     )
 
 
