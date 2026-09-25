@@ -167,6 +167,26 @@ def dispatch_job(
     except Exception as exc:  # noqa: BLE001 - worker must persist terminal failure state
         logger.exception("Job %s failed", job_id)
         fail_running_job(job_id, exc, worker_id=worker_id, session_factory=session_factory)
+    finally:
+        reconcile_job_project(job_id, session_factory=session_factory)
+
+
+def reconcile_job_project(
+    job_id: str,
+    *,
+    session_factory: Callable[[], Session] = SessionLocal,
+) -> None:
+    with session_factory() as db:
+        job = db.get(Job, job_id)
+        project_id = job.project_id if job is not None else None
+    if project_id:
+        try:
+            from app.services.research import reconcile_project
+
+            with session_factory() as db:
+                reconcile_project(db, project_id)
+        except Exception:  # noqa: BLE001 - reconciliation is retried on the next terminal transition/manual action
+            logger.exception("Project reconciliation failed for job %s", job_id)
 
 
 class JobWorker:

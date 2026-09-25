@@ -12,6 +12,8 @@ from app.services.research import (
     get_project_or_404,
     get_workflow_status,
     enqueue_synthesis_job,
+    exclude_candidate,
+    exclude_project_paper,
     import_selected_candidates,
     list_projects,
     plan_project,
@@ -41,6 +43,30 @@ def approve_workflow(
 @router.get("/research-workflows/{project_id}", response_model=ResearchProjectRead)
 def get_workflow(project_id: str, db: Session = Depends(get_db)) -> ResearchProjectRead:
     return serialize_project(get_workflow_status(db, project_id))
+
+
+@router.delete("/research-workflows/{project_id}/candidates/{candidate_id}", response_model=ResearchProjectRead)
+def remove_workflow_candidate(
+    project_id: str,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+) -> ResearchProjectRead:
+    return serialize_project(exclude_candidate(db, project_id, candidate_id))
+
+
+@router.delete("/research-workflows/{project_id}/papers/{paper_id}", response_model=ResearchProjectRead)
+def remove_workflow_paper(
+    project_id: str,
+    paper_id: str,
+    db: Session = Depends(get_db),
+) -> ResearchProjectRead:
+    return serialize_project(exclude_project_paper(db, project_id, paper_id))
+
+
+@router.post("/research-workflows/{project_id}/synthesize", response_model=ResearchProjectRead)
+def synthesize_workflow(project_id: str, db: Session = Depends(get_db)) -> ResearchProjectRead:
+    enqueue_synthesis_job(db, project_id)
+    return serialize_project(get_project_or_404(db, project_id))
 
 
 @router.post("/research-projects", response_model=ResearchProjectRead)

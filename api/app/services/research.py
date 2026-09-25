@@ -37,6 +37,10 @@ DEMO_QUESTION = "How can retrieval augmented generation improve factuality in do
 DEMO_ARXIV_IDS = ["2005.11401", "2310.11511", "2403.10131"]
 
 
+class StaleSynthesisJob(RuntimeError):
+    pass
+
+
 def create_project(db: Session, question: str) -> ResearchProject:
     project = ResearchProject(question=question, status="draft")
     db.add(project)
@@ -57,6 +61,7 @@ def get_project_or_404(db: Session, project_id: str) -> ResearchProject:
             selectinload(ResearchProject.candidates),
             selectinload(ResearchProject.papers).selectinload(ResearchProjectPaper.paper),
             selectinload(ResearchProject.agent_runs).selectinload(AgentRun.steps),
+            selectinload(ResearchProject.jobs),
         )
         .filter(ResearchProject.id == project_id)
         .one_or_none()
@@ -102,7 +107,64 @@ def serialize_project(project: ResearchProject) -> ResearchProjectRead:
         papers=papers,
         agent_run=agent_run,
         memory_signals=[ResearchMemoryRead.model_validate(memory) for memory in memories],
+        recent_jobs=sorted(project.jobs, key=lambda job: job.created_at, reverse=True)[:20],
+        blocking_items=project_blocking_items(project),
     )
+
+
+def project_blocking_items(project: ResearchProject) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    candidates = {candidate.id: candidate for candidate in project.candidates}
+    linked_papers = {link.paper_id: link.paper for link in project.papers}
+    for job in sorted(project.jobs, key=lambda item: item.created_at):
+        if job.status != JobStatus.FAILED:
+            continue
+        if job.job_type == "import" and job.candidate_id in candidates:
+            candidate = candidates[job.candidate_id]
+            blockers.append(
+                {
+                    "target_type": "candidate",
+                    "target_id": candidate.id,
+                    "title": candidate.title,
+                    "job_id": job.id,
+                    "error": job.error_message,
+                }
+            )
+        elif job.job_type == "analysis" and job.paper_id in linked_papers:
+            paper = linked_papers[job.paper_id]
+            blockers.append(
+                {
+                    "target_type": "paper",
+                    "target_id": job.paper_id,
+                    "title": paper.title if paper else "Paper",
+                    "job_id": job.id,
+                    "error": job.error_message,
+                }
+            )
+        elif job.job_type == "synthesis" and job.requested_generation == project.synthesis_generation:
+            blockers.append(
+                {
+                    "target_type": "synthesis",
+                    "target_id": project.id,
+                    "title": "Research synthesis",
+                    "job_id": job.id,
+                    "error": job.error_message,
+                }
+            )
+    for paper_id, paper in linked_papers.items():
+        if paper is not None and paper.status == "failed" and not any(
+            blocker["target_type"] == "paper" and blocker["target_id"] == paper_id for blocker in blockers
+        ):
+            blockers.append(
+                {
+                    "target_type": "paper",
+                    "target_id": paper_id,
+                    "title": paper.title,
+                    "job_id": None,
+                    "error": paper.analysis_warning or "Paper analysis failed.",
+                }
+            )
+    return blockers
 
 
 def start_research_workflow(db: Session, question: str) -> ResearchProject:
@@ -446,6 +508,14 @@ def retry_job(db: Session, job_id: str) -> Job:
         raise HTTPException(status_code=409, detail="Synthesis target no longer exists")
     if job.job_type not in {"import", "analysis", "synthesis"}:
         raise HTTPException(status_code=409, detail="This job type cannot be retried")
+    if job.job_type == "synthesis":
+        project = db.execute(
+            select(ResearchProject).where(ResearchProject.id == job.project_id).with_for_update()
+        ).scalar_one()
+        project.synthesis_generation += 1
+        db.add(project)
+        db.commit()
+        return _create_synthesis_job(db, project)
     job.status = JobStatus.QUEUED
     job.error_message = None
     job.warning_message = None
@@ -460,7 +530,99 @@ def retry_job(db: Session, job_id: str) -> Job:
     db.refresh(job)
     if job.project_id:
         reconcile_workflow_trace_steps(db, job.project_id, latest_agent_run(db, job.project_id))
+        reconcile_project(db, job.project_id)
     return job
+
+
+def _supersede_synthesis(db: Session, project: ResearchProject) -> None:
+    project.synthesis_generation += 1
+    synthesis_jobs = db.query(Job).filter(
+        Job.project_id == project.id,
+        Job.job_type == "synthesis",
+        Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+    ).all()
+    for job in synthesis_jobs:
+        job.status = JobStatus.CANCELLED
+        job.warning_message = "Cancelled because the project evidence set changed."
+        job.finished_at = now()
+        job.lease_expires_at = None
+        db.add(job)
+    db.add(project)
+
+
+def exclude_candidate(db: Session, project_id: str, candidate_id: str) -> ResearchProject:
+    project = db.execute(
+        select(ResearchProject).where(ResearchProject.id == project_id).with_for_update()
+    ).scalar_one_or_none()
+    candidate = db.query(ResearchCandidate).filter(
+        ResearchCandidate.id == candidate_id,
+        ResearchCandidate.project_id == project_id,
+    ).one_or_none()
+    if project is None or candidate is None:
+        raise HTTPException(status_code=404, detail="Candidate not found in this project")
+    jobs = db.query(Job).filter(Job.project_id == project_id, Job.candidate_id == candidate_id).all()
+    paper_ids = {job.paper_id for job in jobs if job.paper_id}
+    for job in jobs:
+        if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            job.status = JobStatus.CANCELLED
+            job.warning_message = "Candidate was excluded from the project."
+            job.finished_at = now()
+            job.lease_expires_at = None
+        payload = dict(job.payload or {})
+        payload.update({"excluded_candidate_id": candidate.id, "excluded_candidate_title": candidate.title})
+        job.payload = payload
+        job.candidate_id = None
+        db.add(job)
+    if paper_ids:
+        db.query(ResearchProjectPaper).filter(
+            ResearchProjectPaper.project_id == project_id,
+            ResearchProjectPaper.paper_id.in_(paper_ids),
+        ).delete(synchronize_session=False)
+        analysis_jobs = db.query(Job).filter(
+            Job.project_id == project_id,
+            Job.paper_id.in_(paper_ids),
+            Job.job_type == "analysis",
+            Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+        ).all()
+        for analysis_job in analysis_jobs:
+            analysis_job.status = JobStatus.CANCELLED
+            analysis_job.warning_message = "Paper was excluded with its candidate."
+            analysis_job.finished_at = now()
+            analysis_job.lease_expires_at = None
+            db.add(analysis_job)
+    db.delete(candidate)
+    _supersede_synthesis(db, project)
+    db.commit()
+    db.expunge_all()
+    return reconcile_project(db, project_id)
+
+
+def exclude_project_paper(db: Session, project_id: str, paper_id: str) -> ResearchProject:
+    project = db.execute(
+        select(ResearchProject).where(ResearchProject.id == project_id).with_for_update()
+    ).scalar_one_or_none()
+    link = db.query(ResearchProjectPaper).filter(
+        ResearchProjectPaper.project_id == project_id,
+        ResearchProjectPaper.paper_id == paper_id,
+    ).one_or_none()
+    if project is None or link is None:
+        raise HTTPException(status_code=404, detail="Paper is not part of this project")
+    jobs = db.query(Job).filter(
+        Job.project_id == project_id,
+        Job.paper_id == paper_id,
+        Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+    ).all()
+    for job in jobs:
+        job.status = JobStatus.CANCELLED
+        job.warning_message = "Paper was excluded from the project."
+        job.finished_at = now()
+        job.lease_expires_at = None
+        db.add(job)
+    db.delete(link)
+    _supersede_synthesis(db, project)
+    db.commit()
+    db.expunge_all()
+    return reconcile_project(db, project_id)
 
 
 def reconcile_workflow_trace_steps(
@@ -517,28 +679,55 @@ def reconcile_workflow_trace_steps(
             db.rollback()
 
 
-def enqueue_synthesis_job(db: Session, project_id: str) -> Job:
-    project = get_project_or_404(db, project_id)
-    active = db.query(Job).filter(
-        Job.project_id == project_id,
-        Job.job_type == "synthesis",
-        Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
-    ).one_or_none()
-    if active is not None:
-        return active
-    project.synthesis_generation += 1
+def _create_synthesis_job(db: Session, project: ResearchProject) -> Job:
+    if project.synthesis_generation == 0:
+        project.synthesis_generation = 1
+    key = f"synthesis:{project.id}:{project.synthesis_generation}"
+    existing = db.query(Job).filter(Job.idempotency_key == key).one_or_none()
+    if existing is not None:
+        return existing
     job = Job(
-        project_id=project_id,
+        project_id=project.id,
         job_type="synthesis",
         status=JobStatus.QUEUED,
-        idempotency_key=f"synthesis:{project_id}:{project.synthesis_generation}",
+        idempotency_key=key,
         requested_generation=project.synthesis_generation,
     )
     project.status = "synthesis_queued"
     db.add_all([project, job])
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(Job).filter(Job.idempotency_key == key).one_or_none()
+        if existing is None:
+            raise
+        return existing
     db.refresh(job)
     return job
+
+
+def enqueue_synthesis_job(db: Session, project_id: str) -> Job:
+    project = reconcile_project(db, project_id)
+    active = db.query(Job).filter(
+        Job.project_id == project_id,
+        Job.job_type == "synthesis",
+        Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+    ).order_by(Job.created_at.desc()).first()
+    if active is not None:
+        return active
+    if project.status in {"importing", "analyzing", "blocked", "awaiting_approval"}:
+        raise HTTPException(status_code=409, detail="Synthesis cannot start until all remaining papers are ready")
+    current = db.query(Job).filter(
+        Job.project_id == project_id,
+        Job.job_type == "synthesis",
+        Job.requested_generation == project.synthesis_generation,
+    ).one_or_none()
+    if current is not None:
+        project.synthesis_generation += 1
+    elif project.synthesis_generation == 0:
+        project.synthesis_generation = 1
+    return _create_synthesis_job(db, project)
 
 
 def process_synthesis_job(
@@ -555,12 +744,32 @@ def process_synthesis_job(
         project = db.get(ResearchProject, job.project_id)
         if project is None:
             raise RuntimeError("Synthesis target no longer exists")
+        if job.requested_generation != project.synthesis_generation:
+            job.status = JobStatus.CANCELLED
+            job.warning_message = "Superseded by a newer synthesis generation."
+            job.finished_at = now()
+            job.lease_expires_at = None
+            db.add(job)
+            db.commit()
+            return
         project.status = "synthesizing"
         db.add(project)
         db.commit()
         if heartbeat:
             heartbeat()
-        synthesize_project(db, project.id)
+        try:
+            synthesize_project(db, project.id, expected_generation=job.requested_generation)
+        except StaleSynthesisJob as exc:
+            db.rollback()
+            job = db.get(Job, job_id)
+            if job is not None:
+                job.status = JobStatus.CANCELLED
+                job.warning_message = str(exc)
+                job.finished_at = now()
+                job.lease_expires_at = None
+                db.add(job)
+                db.commit()
+            return
         if heartbeat:
             heartbeat()
         job = db.get(Job, job_id)
@@ -575,33 +784,92 @@ def process_synthesis_job(
 
 
 def get_workflow_status(db: Session, project_id: str) -> ResearchProject:
-    project = get_project_or_404(db, project_id)
-    if project.status in {"analyzing", "synthesizing"}:
-        project = maybe_synthesize_ready_project(db, project)
-    return project
+    return get_project_or_404(db, project_id)
 
 
 def maybe_synthesize_ready_project(db: Session, project: ResearchProject) -> ResearchProject:
-    agent_run = latest_agent_run(db, project.id)
-    papers = [link.paper for link in project.papers if link.paper is not None]
-    if not papers:
-        return project
-    if any(paper.status == "failed" for paper in papers):
-        project.status = "failed"
-        db.add(project)
-        db.commit()
-        set_agent_run_status(db, agent_run, "failed", "At least one imported paper analysis failed.")
-        return get_project_or_404(db, project.id)
-    if all(paper.status == "ready" for paper in papers) and not project.synthesis_json:
-        project.status = "synthesizing"
-        db.add(project)
-        db.commit()
-        set_agent_run_status(db, agent_run, project.status)
-        return synthesize_project(db, project.id, agent_run)
-    return project
+    return reconcile_project(db, project.id)
 
 
-def synthesize_project(db: Session, project_id: str, agent_run: AgentRun | None = None) -> ResearchProject:
+def reconcile_project(
+    db: Session,
+    project_id: str,
+    *,
+    enqueue_synthesis: bool = True,
+) -> ResearchProject:
+    project = db.execute(
+        select(ResearchProject).where(ResearchProject.id == project_id).with_for_update()
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Research project not found")
+    import_jobs = db.query(Job).filter(
+        Job.project_id == project_id,
+        Job.job_type == "import",
+        Job.candidate_id.is_not(None),
+    ).all()
+    links = db.query(ResearchProjectPaper).filter(ResearchProjectPaper.project_id == project_id).all()
+    papers = [db.get(Paper, link.paper_id) for link in links]
+    papers = [paper for paper in papers if paper is not None]
+    analysis_jobs = db.query(Job).filter(
+        Job.project_id == project_id,
+        Job.job_type == "analysis",
+        Job.paper_id.in_([paper.id for paper in papers]) if papers else Job.id.is_(None),
+    ).all()
+
+    if not import_jobs and not papers:
+        project.status = "awaiting_approval"
+    elif (
+        any(job.status == JobStatus.FAILED for job in import_jobs)
+        or any(job.status == JobStatus.FAILED for job in analysis_jobs)
+        or any(paper.status == "failed" for paper in papers)
+    ):
+        project.status = "blocked"
+    elif any(job.status in {JobStatus.QUEUED, JobStatus.RUNNING} for job in import_jobs):
+        project.status = "importing"
+    elif not papers:
+        project.status = "blocked"
+    elif any(job.status in {JobStatus.QUEUED, JobStatus.RUNNING} for job in analysis_jobs) or any(
+        paper.status not in {"ready", "degraded"} for paper in papers
+    ):
+        project.status = "analyzing"
+    else:
+        current_synthesis = db.query(Job).filter(
+            Job.project_id == project_id,
+            Job.job_type == "synthesis",
+            Job.requested_generation == project.synthesis_generation,
+        ).order_by(Job.created_at.desc()).first()
+        if current_synthesis is not None and current_synthesis.status == JobStatus.RUNNING:
+            project.status = "synthesizing"
+        elif current_synthesis is not None and current_synthesis.status == JobStatus.QUEUED:
+            project.status = "synthesis_queued"
+        elif current_synthesis is not None and current_synthesis.status == JobStatus.FAILED:
+            project.status = "failed"
+        elif current_synthesis is not None and current_synthesis.status in {
+            JobStatus.COMPLETED,
+            JobStatus.COMPLETED_WITH_WARNINGS,
+        }:
+            project.status = "degraded" if any(paper.status == "degraded" for paper in papers) else "done"
+        elif enqueue_synthesis:
+            db.add(project)
+            db.commit()
+            _create_synthesis_job(db, project)
+            reconcile_workflow_trace_steps(db, project_id, latest_agent_run(db, project_id))
+            return get_project_or_404(db, project_id)
+        else:
+            project.status = "analyzing"
+    db.add(project)
+    db.commit()
+    reconcile_workflow_trace_steps(db, project_id, latest_agent_run(db, project_id))
+    return get_project_or_404(db, project_id)
+
+
+def synthesize_project(
+    db: Session,
+    project_id: str,
+    agent_run: AgentRun | None = None,
+    *,
+    expected_generation: int | None = None,
+) -> ResearchProject:
     project = get_project_or_404(db, project_id)
     agent_run = agent_run or latest_agent_run(db, project_id)
     contexts = build_paper_contexts(project)
@@ -628,6 +896,13 @@ def synthesize_project(db: Session, project_id: str, agent_run: AgentRun | None 
         fail_agent_step(db, step, exc)
         set_agent_run_status(db, agent_run, "failed", str(exc))
         raise
+    project = db.execute(
+        select(ResearchProject).where(ResearchProject.id == project_id).with_for_update()
+    ).scalar_one()
+    if expected_generation is not None and project.synthesis_generation != expected_generation:
+        raise StaleSynthesisJob(
+            f"Synthesis generation {expected_generation} was superseded by {project.synthesis_generation}."
+        )
     project.synthesis_json = brief.model_dump()
     project.status = "done"
     db.add(project)
