@@ -4,9 +4,10 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import get_settings
 from app.services.fallbacks import record_fallback
@@ -58,6 +59,10 @@ class PaperFinding(BaseModel):
     label: str
     summary: str
     citations: list[EvidenceCitation]
+
+
+class EvidenceValidationError(ValueError):
+    pass
 
 
 class ResearchBrief(BaseModel):
@@ -336,6 +341,7 @@ class LangChainProvider(MockProvider):
 
     def plan_research(self, question: str) -> ResearchPlan:
         try:
+            offered_ids = {candidate["arxiv_id"] for candidate in candidates}
             return invoke_structured_json(
                 self.chat_model,
                 ResearchPlan,
@@ -360,6 +366,7 @@ class LangChainProvider(MockProvider):
                 "Select the 3 to 5 most relevant arXiv candidates for the research question. Use memory as a weak preference signal, but do not select irrelevant papers just because memory mentions related terms.",
                 "Question: {question}\nMemory signals:\n{memory_context}\nCandidates:\n{candidates}",
                 {"question": question, "memory_context": format_memories(memory_context or []), "candidates": format_candidates(candidates)},
+                validator=lambda output: validate_candidate_selection(output, offered_ids),
             )
         except Exception as exc:
             record_fallback("ai.select_relevant_candidates", "mock.select_relevant_candidates", str(exc), {"candidate_count": len(candidates)})
@@ -367,16 +374,29 @@ class LangChainProvider(MockProvider):
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
         try:
+            registry = EvidenceRegistry.from_chunks(chunks[:10])
             output = invoke_structured_json(
                 self.chat_model,
                 PaperSummaryOutput,
                 "Summarize the paper using only supplied chunks. Every section and highlight must cite supplied pages/chunks.",
                 "Title: {title}\nChunks:\n{context}",
                 {"title": paper_title, "context": format_chunks(chunks[:10])},
+                validator=lambda value: validate_summary_evidence(value, registry),
+            )
+            section_names = (
+                "problem_or_hypothesis",
+                "approach",
+                "experiments",
+                "results",
+                "conclusion",
+                "limitations_or_notes",
             )
             return SummaryPayload(
-                sections=output.sections,
-                section_citations=output.section_citations,
+                sections={name: getattr(output, name).text for name in section_names},
+                section_citations={
+                    name: [citation.model_dump(exclude_none=True) for citation in getattr(output, name).citations]
+                    for name in section_names
+                },
                 highlights=[highlight.model_dump() for highlight in output.highlights],
             )
         except Exception as exc:
@@ -390,12 +410,14 @@ class LangChainProvider(MockProvider):
         memory_context: list[dict[str, Any]] | None = None,
     ) -> ResearchBrief:
         try:
+            registry = EvidenceRegistry.from_paper_contexts(paper_contexts)
             return invoke_structured_json(
                 self.chat_model,
                 ResearchBrief,
                 "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence. Use memory only to prioritize emphasis; do not cite memory as evidence.",
                 "Question: {question}\nMemory signals:\n{memory_context}\nPaper evidence:\n{context}",
                 {"question": question, "memory_context": format_memories(memory_context or []), "context": format_paper_contexts(paper_contexts)},
+                validator=lambda output: validate_brief_evidence(output, registry),
             )
         except Exception as exc:
             record_fallback("ai.synthesize_collection", "mock.synthesize_collection", str(exc), {"paper_count": len(paper_contexts)})
@@ -403,12 +425,14 @@ class LangChainProvider(MockProvider):
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
         try:
+            expected_ids = {context["paper_id"] for context in paper_contexts}
             return invoke_structured_json(
                 self.chat_model,
                 BatchSummary,
                 "Summarize a batch of research papers into a comparison table using only supplied evidence.",
                 "Goal: {goal}\nPaper evidence:\n{context}",
                 {"goal": goal, "context": format_paper_contexts(paper_contexts)},
+                validator=lambda output: validate_batch_output(output, expected_ids),
             )
         except Exception as exc:
             record_fallback("ai.summarize_batch", "mock.summarize_batch", str(exc), {"paper_count": len(paper_contexts)})
@@ -422,6 +446,7 @@ class LangChainProvider(MockProvider):
         history: list[dict[str, str]],
     ) -> ChatPayload:
         try:
+            registry = EvidenceRegistry.from_chunks(context_chunks)
             output = invoke_structured_json(
                 self.chat_model,
                 ChatOutput,
@@ -433,29 +458,200 @@ class LangChainProvider(MockProvider):
                     "history": history[-6:],
                     "context": format_chunks(context_chunks),
                 },
+                validator=lambda value: validate_citations(
+                    value.citations,
+                    registry,
+                    require_at_least_one=False,
+                ),
             )
-            return ChatPayload(answer=output.answer, citations=output.citations)
+            return ChatPayload(
+                answer=output.answer,
+                citations=[citation.model_dump(exclude_none=True) for citation in output.citations],
+            )
         except Exception as exc:
             record_fallback("ai.answer_question", "mock.answer_question", str(exc), {"chunk_count": len(context_chunks)})
             return super().answer_question(paper_title, question, context_chunks, history)
 
 
+class CitedSummarySection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1)
+    citations: list[EvidenceCitation] = Field(min_length=1)
+
+
 class HighlightOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     position: int
     label: str
     explanation: str
-    citations: list[dict[str, str | int]]
+    citations: list[EvidenceCitation] = Field(min_length=1)
 
 
 class PaperSummaryOutput(BaseModel):
-    sections: dict[str, str]
-    section_citations: dict[str, list[dict[str, str | int]]]
+    model_config = ConfigDict(extra="forbid")
+
+    problem_or_hypothesis: CitedSummarySection
+    approach: CitedSummarySection
+    experiments: CitedSummarySection
+    results: CitedSummarySection
+    conclusion: CitedSummarySection
+    limitations_or_notes: CitedSummarySection
     highlights: list[HighlightOutput]
 
 
 class ChatOutput(BaseModel):
     answer: str
-    citations: list[dict[str, str | int]]
+    citations: list[EvidenceCitation]
+
+
+@dataclass(frozen=True)
+class EvidenceRecord:
+    chunk_id: str
+    text: str
+    page_start: int
+    page_end: int
+    paper_id: str | None = None
+    title: str | None = None
+
+
+class EvidenceRegistry:
+    def __init__(self, records: list[EvidenceRecord]) -> None:
+        self.records = {record.chunk_id: record for record in records}
+
+    @classmethod
+    def from_chunks(cls, chunks: list[dict[str, Any]]) -> "EvidenceRegistry":
+        return cls(
+            [
+                EvidenceRecord(
+                    chunk_id=str(chunk["id"]),
+                    text=str(chunk["text"]),
+                    page_start=int(chunk["page_start"]),
+                    page_end=int(chunk.get("page_end", chunk["page_start"])),
+                    paper_id=str(chunk["paper_id"]) if chunk.get("paper_id") else None,
+                    title=str(chunk["title"]) if chunk.get("title") else None,
+                )
+                for chunk in chunks
+            ]
+        )
+
+    @classmethod
+    def from_paper_contexts(cls, contexts: list[dict[str, Any]]) -> "EvidenceRegistry":
+        records = []
+        for context in contexts:
+            for chunk in context.get("chunks", []):
+                records.append(
+                    EvidenceRecord(
+                        chunk_id=str(chunk["id"]),
+                        text=str(chunk["text"]),
+                        page_start=int(chunk["page_start"]),
+                        page_end=int(chunk.get("page_end", chunk["page_start"])),
+                        paper_id=str(context["paper_id"]),
+                        title=str(context["title"]),
+                    )
+                )
+        return cls(records)
+
+
+def normalize_evidence_text(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def validate_citations(
+    citations: list[EvidenceCitation] | list[dict[str, Any]],
+    registry: EvidenceRegistry,
+    *,
+    require_paper_identity: bool = False,
+    require_at_least_one: bool = True,
+) -> None:
+    if not citations and require_at_least_one:
+        raise EvidenceValidationError("At least one citation is required")
+    for raw_citation in citations:
+        citation = raw_citation if isinstance(raw_citation, EvidenceCitation) else EvidenceCitation.model_validate(raw_citation)
+        if not citation.chunk_id or citation.chunk_id not in registry.records:
+            raise EvidenceValidationError(f"Unknown evidence chunk: {citation.chunk_id}")
+        record = registry.records[citation.chunk_id]
+        if not record.page_start <= citation.page <= record.page_end:
+            raise EvidenceValidationError(
+                f"Citation page {citation.page} is outside chunk {record.chunk_id} pages "
+                f"{record.page_start}-{record.page_end}"
+            )
+        excerpt = normalize_evidence_text(citation.excerpt)
+        if not excerpt or excerpt not in normalize_evidence_text(record.text):
+            raise EvidenceValidationError(f"Citation excerpt is not verbatim evidence from chunk {record.chunk_id}")
+        if require_paper_identity:
+            if not citation.paper_id or citation.paper_id != record.paper_id:
+                raise EvidenceValidationError(f"Citation paper does not match chunk {record.chunk_id}")
+            if not citation.title or normalize_evidence_text(citation.title) != normalize_evidence_text(record.title or ""):
+                raise EvidenceValidationError(f"Citation title does not match chunk {record.chunk_id}")
+
+
+def validate_summary_evidence(output: PaperSummaryOutput, registry: EvidenceRegistry) -> None:
+    for section_name in (
+        "problem_or_hypothesis",
+        "approach",
+        "experiments",
+        "results",
+        "conclusion",
+        "limitations_or_notes",
+    ):
+        validate_citations(getattr(output, section_name).citations, registry)
+    for highlight in output.highlights:
+        validate_citations(highlight.citations, registry)
+
+
+def validate_summary_payload(payload: SummaryPayload, chunks: list[dict[str, Any]]) -> None:
+    registry = EvidenceRegistry.from_chunks(chunks)
+    required_sections = {
+        "problem_or_hypothesis",
+        "approach",
+        "experiments",
+        "results",
+        "conclusion",
+        "limitations_or_notes",
+    }
+    if set(payload.sections) != required_sections or set(payload.section_citations) != required_sections:
+        raise EvidenceValidationError("Summary must contain exactly the six required sections")
+    for section_name in required_sections:
+        if not payload.sections[section_name].strip():
+            raise EvidenceValidationError(f"Summary section {section_name} is empty")
+        validate_citations(payload.section_citations[section_name], registry)
+    for highlight in payload.highlights:
+        validate_citations(highlight.get("citations", []), registry)
+
+
+def validate_brief_evidence(brief: ResearchBrief, registry: EvidenceRegistry) -> None:
+    for finding in (
+        *brief.key_findings,
+        *brief.evidence_table,
+        *brief.conflicts_or_gaps,
+        *brief.suggested_experiments,
+        *brief.suggested_research_directions,
+    ):
+        validate_citations(finding.citations, registry, require_paper_identity=True)
+
+
+def validate_candidate_selection(selection: CandidateSelection, offered_ids: set[str]) -> None:
+    selected_ids = [choice.arxiv_id for choice in selection.selected]
+    if not selected_ids:
+        raise EvidenceValidationError("Candidate selection did not contain any offered candidates")
+    unknown = sorted(set(selected_ids) - offered_ids)
+    if unknown:
+        raise EvidenceValidationError(f"Candidate selection invented IDs: {', '.join(unknown)}")
+    if len(selected_ids) != len(set(selected_ids)):
+        raise EvidenceValidationError("Candidate selection contains duplicate IDs")
+
+
+def validate_batch_output(output: BatchSummary, expected_ids: set[str]) -> None:
+    actual_ids = [paper.paper_id for paper in output.papers]
+    if len(actual_ids) != len(set(actual_ids)):
+        raise EvidenceValidationError("Batch output contains duplicate paper IDs")
+    actual_set = set(actual_ids)
+    if actual_set != expected_ids:
+        missing = sorted(expected_ids - actual_set)
+        invented = sorted(actual_set - expected_ids)
+        raise EvidenceValidationError(f"Batch output ID mismatch; missing={missing}, invented={invented}")
 
 
 STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
@@ -478,21 +674,29 @@ STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
         ]
     },
     "PaperSummaryOutput": {
-        "sections": {
-            "problem_or_hypothesis": "The paper studies whether retrieval grounding improves factual question answering.",
-            "approach": "The authors compare a retrieval-augmented system against non-retrieval baselines.",
-            "experiments": "The paper evaluates models on benchmark question-answering datasets.",
-            "results": "The retrieval-augmented system improves grounded answer quality in the reported setting.",
-            "conclusion": "Retrieval can improve factuality when retrieved passages are relevant.",
-            "limitations_or_notes": "The supplied evidence is limited to the provided chunks.",
+        "problem_or_hypothesis": {
+            "text": "The paper studies whether retrieval grounding improves factual question answering.",
+            "citations": [{"page": 1, "excerpt": "The paper studies retrieval grounding.", "chunk_id": "chunk-1"}],
         },
-        "section_citations": {
-            "problem_or_hypothesis": [{"page": 1, "excerpt": "The paper studies retrieval grounding.", "chunk_id": "chunk-1"}],
-            "approach": [{"page": 2, "excerpt": "The method retrieves relevant passages.", "chunk_id": "chunk-2"}],
-            "experiments": [{"page": 3, "excerpt": "Experiments use benchmark datasets.", "chunk_id": "chunk-3"}],
-            "results": [{"page": 4, "excerpt": "Results improve over baselines.", "chunk_id": "chunk-4"}],
-            "conclusion": [{"page": 5, "excerpt": "The authors conclude retrieval helps.", "chunk_id": "chunk-5"}],
-            "limitations_or_notes": [{"page": 6, "excerpt": "Limitations are discussed.", "chunk_id": "chunk-6"}],
+        "approach": {
+            "text": "The authors compare a retrieval-augmented system against non-retrieval baselines.",
+            "citations": [{"page": 2, "excerpt": "The method retrieves relevant passages.", "chunk_id": "chunk-2"}],
+        },
+        "experiments": {
+            "text": "The paper evaluates models on benchmark question-answering datasets.",
+            "citations": [{"page": 3, "excerpt": "Experiments use benchmark datasets.", "chunk_id": "chunk-3"}],
+        },
+        "results": {
+            "text": "The retrieval-augmented system improves grounded answer quality in the reported setting.",
+            "citations": [{"page": 4, "excerpt": "Results improve over baselines.", "chunk_id": "chunk-4"}],
+        },
+        "conclusion": {
+            "text": "Retrieval can improve factuality when retrieved passages are relevant.",
+            "citations": [{"page": 5, "excerpt": "The authors conclude retrieval helps.", "chunk_id": "chunk-5"}],
+        },
+        "limitations_or_notes": {
+            "text": "The supplied evidence is limited to the provided chunks.",
+            "citations": [{"page": 6, "excerpt": "Limitations are discussed.", "chunk_id": "chunk-6"}],
         },
         "highlights": [
             {
@@ -569,6 +773,7 @@ def invoke_structured_json(
     task: str,
     human_template: str,
     payload: dict[str, Any],
+    validator: Callable[[StructuredModel], None] | None = None,
 ) -> StructuredModel:
     schema_name = output_model.__name__
     schema = json.dumps(output_model.model_json_schema(), ensure_ascii=True)
@@ -589,9 +794,15 @@ def invoke_structured_json(
     )
 
     try:
-        return invoke_structured_once(chat_model, output_model, system_prompt, human_template, payload)
+        result = invoke_structured_once(chat_model, output_model, system_prompt, human_template, payload)
+        if validator is not None:
+            validator(result)
+        return result
     except Exception:
-        return invoke_structured_once(chat_model, output_model, retry_system_prompt, human_template, payload)
+        result = invoke_structured_once(chat_model, output_model, retry_system_prompt, human_template, payload)
+        if validator is not None:
+            validator(result)
+        return result
 
 
 def invoke_structured_once(

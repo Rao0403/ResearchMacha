@@ -12,7 +12,7 @@ from app.core.database import SessionLocal
 from app.models.paper import ChatMessage, ChatSession, Highlight, Job, Paper, PaperChunk, PaperSummary, default_id
 from app.models.states import JobStatus
 from app.schemas.paper import ChatMessageRead, ChatResponse
-from app.ai import get_ai_provider
+from app.ai import EvidenceRegistry, get_ai_provider, validate_citations, validate_summary_payload
 from app.services.fallbacks import clear_fallback_events, pop_fallback_events, record_fallback
 from app.services.memory import create_paper_fact_memory
 from app.services.pdf import chunk_pages, extract_pdf_pages
@@ -158,6 +158,7 @@ def process_analysis_job(
             for chunk in replacement_chunks
         ]
         summary_payload = provider.generate_summary(paper.title, chunk_payload)
+        validate_summary_payload(summary_payload, chunk_payload)
         if heartbeat:
             heartbeat()
         fallback_events = pop_fallback_events()
@@ -271,6 +272,11 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
         for chunk in retrieved
     ]
     answer_payload = provider.answer_question(paper.title, question, chunk_payload, history)
+    validate_citations(
+        answer_payload.citations,
+        EvidenceRegistry.from_chunks(chunk_payload),
+        require_at_least_one=False,
+    )
     fallback_events = pop_fallback_events()
     if fallback_events:
         answer_payload.answer = (

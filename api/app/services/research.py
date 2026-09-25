@@ -9,7 +9,16 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session, selectinload
 
-from app.ai import BatchSummary, MockProvider, ResearchBrief, get_ai_provider
+from app.ai import (
+    BatchSummary,
+    EvidenceRegistry,
+    MockProvider,
+    ResearchBrief,
+    get_ai_provider,
+    validate_batch_output,
+    validate_brief_evidence,
+    validate_candidate_selection,
+)
 from app.core.database import SessionLocal
 from app.models.paper import AgentRun, AgentStep, Job, Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
 from app.models.states import JobStatus
@@ -212,6 +221,7 @@ def select_recommended_candidates(db: Session, project_id: str, agent_run: Agent
 
     try:
         selection = get_ai_provider().select_relevant_candidates(project.question, candidate_payloads, memory_payloads)
+        validate_candidate_selection(selection, {candidate["arxiv_id"] for candidate in candidate_payloads})
         selected_ids = {choice.arxiv_id for choice in selection.selected}
         rationales = {choice.arxiv_id: choice.rationale for choice in selection.selected}
     except Exception as exc:
@@ -871,6 +881,10 @@ def synthesize_project(
     expected_generation: int | None = None,
 ) -> ResearchProject:
     project = get_project_or_404(db, project_id)
+    if expected_generation is not None and project.synthesis_generation != expected_generation:
+        raise StaleSynthesisJob(
+            f"Synthesis generation {expected_generation} was superseded by {project.synthesis_generation}."
+        )
     agent_run = agent_run or latest_agent_run(db, project_id)
     contexts = build_paper_contexts(project)
     if not contexts:
@@ -892,6 +906,7 @@ def synthesize_project(
     try:
         brief = get_ai_provider().synthesize_collection(project.question, contexts, memory_payloads)
         ensure_cited_brief(brief)
+        validate_brief_evidence(brief, EvidenceRegistry.from_paper_contexts(contexts))
     except Exception as exc:
         fail_agent_step(db, step, exc)
         set_agent_run_status(db, agent_run, "failed", str(exc))
@@ -971,14 +986,27 @@ def build_paper_contexts_by_ids(db: Session, paper_ids: list[str], query: str | 
 
 
 def summarize_batch_papers(db: Session, paper_ids: list[str], goal: str) -> BatchSummary:
-    contexts = build_paper_contexts_by_ids(db, paper_ids, query=goal)
+    requested_ids = set(paper_ids)
+    ready_ids = {
+        paper_id
+        for (paper_id,) in db.query(Paper.id)
+        .filter(Paper.id.in_(requested_ids), Paper.status.in_(["ready", "degraded"]))
+        .all()
+    }
+    if ready_ids != requested_ids:
+        raise HTTPException(status_code=400, detail="Every requested batch paper must be ready or degraded")
+    contexts = build_paper_contexts_by_ids(db, list(requested_ids), query=goal)
     if not contexts:
         raise HTTPException(status_code=400, detail="No analyzed paper evidence is available for batch summary")
     try:
-        return get_ai_provider().summarize_batch(goal, contexts)
+        output = get_ai_provider().summarize_batch(goal, contexts)
+        validate_batch_output(output, requested_ids)
+        return output
     except Exception as exc:
         record_fallback("research.summarize_batch", "mock.summarize_batch", str(exc), {"paper_count": len(contexts)})
-        return MockProvider().summarize_batch(goal, contexts)
+        output = MockProvider().summarize_batch(goal, contexts)
+        validate_batch_output(output, requested_ids)
+        return output
 
 
 def select_context_chunks(db: Session, paper: Paper, query: str, limit: int) -> list[PaperChunk]:
