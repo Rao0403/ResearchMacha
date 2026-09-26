@@ -12,7 +12,16 @@ from app.core.database import SessionLocal
 from app.models.paper import ChatMessage, ChatSession, Highlight, Job, Paper, PaperChunk, PaperSummary, default_id
 from app.models.states import JobStatus
 from app.schemas.paper import ChatMessageRead, ChatResponse
-from app.ai import EvidenceRegistry, get_ai_provider, validate_citations, validate_summary_payload
+from app.ai import (
+    AIProviderError,
+    EvidenceRegistry,
+    EvidenceValidationError,
+    build_extractive_chat,
+    build_extractive_summary,
+    get_ai_provider,
+    validate_citations,
+    validate_summary_payload,
+)
 from app.services.fallbacks import clear_fallback_events, pop_fallback_events, record_fallback
 from app.services.memory import create_paper_fact_memory
 from app.services.pdf import chunk_pages, extract_pdf_pages
@@ -89,6 +98,11 @@ def process_analysis_job(
             return
 
         previous_status = paper.status if paper.analysis_generation > 0 else None
+        has_prior_ai_analysis = (
+            paper.analysis_generation > 0
+            and paper.analysis_mode == "ai"
+            and db.query(PaperSummary).filter(PaperSummary.paper_id == paper.id).count() > 0
+        )
         payload = dict(job.payload or {})
         payload["previous_status"] = previous_status
         job.payload = payload
@@ -105,9 +119,20 @@ def process_analysis_job(
         if heartbeat:
             heartbeat()
         clear_fallback_events()
-        provider = get_ai_provider()
+        provider = None
+        provider_error: AIProviderError | None = None
+        try:
+            provider = get_ai_provider()
+        except AIProviderError as exc:
+            provider_error = exc
+            record_fallback(
+                "analysis.initialize_provider",
+                "extractive_generation",
+                str(exc),
+                {"paper_id": paper.id},
+            )
         embedding_result = None
-        if chunks:
+        if chunks and provider is not None:
             try:
                 embedding_result = provider.embed_texts([chunk["text"] for chunk in chunks])
             except Exception as exc:  # noqa: BLE001 - unembedded chunks remain usable through lexical retrieval
@@ -157,11 +182,45 @@ def process_analysis_job(
             }
             for chunk in replacement_chunks
         ]
-        summary_payload = provider.generate_summary(paper.title, chunk_payload)
-        validate_summary_payload(summary_payload, chunk_payload)
+        try:
+            if provider is None:
+                raise provider_error or AIProviderError("AI provider is unavailable")
+            summary_payload = provider.generate_summary(paper.title, chunk_payload)
+            validate_summary_payload(summary_payload, chunk_payload)
+        except (AIProviderError, EvidenceValidationError) as exc:
+            warning = f"AI summary unavailable; source-extractive fallback used: {exc}"
+            record_fallback(
+                "analysis.generate_summary",
+                "source_extractive_summary",
+                str(exc),
+                {"paper_id": paper.id, "chunk_count": len(chunk_payload)},
+            )
+            if has_prior_ai_analysis:
+                try:
+                    get_vector_store().delete_chunks(replacement_chunks)
+                except Exception:  # noqa: BLE001 - replacement points cannot resolve without database rows
+                    pass
+                fallback_events = pop_fallback_events()
+                payload = dict(job.payload or {})
+                payload.update({"fallback_used": True, "fallbacks": fallback_events})
+                job.payload = payload
+                job.status = JobStatus.COMPLETED_WITH_WARNINGS
+                job.warning_message = warning
+                job.finished_at = now()
+                job.lease_expires_at = None
+                paper.status = previous_status or "ready"
+                paper.analysis_warning = warning
+                db.add_all([paper, job])
+                db.commit()
+                return
+            summary_payload = build_extractive_summary(paper.title, chunk_payload, warning)
+            validate_summary_payload(summary_payload, chunk_payload)
         if heartbeat:
             heartbeat()
         fallback_events = pop_fallback_events()
+        warnings = list(summary_payload.warnings)
+        warnings.extend(event["reason"] for event in fallback_events if event["reason"] not in warnings)
+        warning_message = "; ".join(warnings) or None
 
         replacement_summary = PaperSummary(
             paper_id=paper.id,
@@ -172,6 +231,8 @@ def process_analysis_job(
             conclusion=summary_payload.sections["conclusion"],
             limitations_or_notes=summary_payload.sections["limitations_or_notes"],
             section_citations=summary_payload.section_citations,
+            generation_mode=summary_payload.generation_mode,
+            warning=warning_message,
         )
         replacement_highlights = [
             Highlight(
@@ -189,8 +250,9 @@ def process_analysis_job(
         db.query(PaperSummary).filter(PaperSummary.paper_id == paper.id).delete(synchronize_session=False)
         db.add_all([*replacement_chunks, replacement_summary, *replacement_highlights])
         paper.analysis_generation = requested_generation
-        paper.analysis_warning = None
-        paper.status = "ready"
+        paper.analysis_mode = summary_payload.generation_mode
+        paper.analysis_warning = warning_message
+        paper.status = "ready" if summary_payload.generation_mode == "ai" and not warnings else "degraded"
         if fallback_events:
             payload = dict(job.payload or {})
             payload.update({"fallback_used": True, "fallbacks": fallback_events})
@@ -225,7 +287,10 @@ def process_analysis_job(
                 payload["fallback_used"] = True
                 payload["fallbacks"] = [*(payload.get("fallbacks") or []), *memory_fallback_events]
                 job.payload = payload
-            job.status = JobStatus.COMPLETED
+                memory_warnings = [event["reason"] for event in memory_fallback_events]
+                warning_message = "; ".join([item for item in [warning_message, *memory_warnings] if item])
+            job.status = JobStatus.COMPLETED_WITH_WARNINGS if warning_message else JobStatus.COMPLETED
+            job.warning_message = warning_message
             job.finished_at = now()
             job.lease_expires_at = None
             db.add(job)
@@ -258,7 +323,6 @@ def process_analysis_job(
 def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: str) -> ChatResponse:
     history = [{"role": message.role, "content": message.content} for message in session.messages]
     clear_fallback_events()
-    provider = get_ai_provider()
     retrieved = retrieve_paper_chunks(db, paper.id, question, limit=4)
 
     chunk_payload = [
@@ -271,18 +335,32 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
         }
         for chunk in retrieved
     ]
-    answer_payload = provider.answer_question(paper.title, question, chunk_payload, history)
-    validate_citations(
-        answer_payload.citations,
-        EvidenceRegistry.from_chunks(chunk_payload),
-        require_at_least_one=False,
-    )
-    fallback_events = pop_fallback_events()
-    if fallback_events:
-        answer_payload.answer = (
-            "Fallback notice: part of this answer used a deterministic fallback because the primary path failed. "
-            f"Reason: {fallback_events[0]['reason']}\n\n{answer_payload.answer}"
+    try:
+        provider = get_ai_provider()
+        answer_payload = provider.answer_question(paper.title, question, chunk_payload, history)
+        validate_citations(
+            answer_payload.citations,
+            EvidenceRegistry.from_chunks(chunk_payload),
+            require_at_least_one=False,
         )
+    except (AIProviderError, EvidenceValidationError) as exc:
+        warning = f"AI answer unavailable; source-extractive fallback used: {exc}"
+        record_fallback(
+            "analysis.answer_question",
+            "source_extractive_answer",
+            str(exc),
+            {"paper_id": paper.id, "chunk_count": len(chunk_payload)},
+        )
+        answer_payload = build_extractive_chat(paper.title, question, chunk_payload, warning)
+        validate_citations(
+            answer_payload.citations,
+            EvidenceRegistry.from_chunks(chunk_payload),
+            require_at_least_one=False,
+        )
+    fallback_events = pop_fallback_events()
+    warnings = list(answer_payload.warnings)
+    warnings.extend(event["reason"] for event in fallback_events if event["reason"] not in warnings)
+    warning_message = "; ".join(warnings) or None
 
     user_message = ChatMessage(session_id=session.id, role="user", content=question, citations=[])
     assistant_message = ChatMessage(
@@ -290,6 +368,8 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
         role="assistant",
         content=answer_payload.answer,
         citations=answer_payload.citations,
+        generation_mode=answer_payload.generation_mode,
+        warning=warning_message,
     )
     db.add_all([user_message, assistant_message])
     db.commit()
@@ -300,6 +380,8 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
         answer=ChatMessageRead.model_validate(assistant_message),
         citations=assistant_message.citations,
         retrieved_chunk_ids=[chunk.id for chunk in retrieved],
+        generation_mode=answer_payload.generation_mode,
+        warnings=warnings,
     )
 
 

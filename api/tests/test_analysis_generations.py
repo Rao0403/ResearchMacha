@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.ai import MockProvider
+from app.ai import AIProviderError, MockProvider
 from app.core.database import Base
 from app.models.paper import Highlight, Job, Paper, PaperChunk, PaperSummary
 from app.models.states import JobStatus
@@ -32,6 +32,7 @@ def seed_successful_analysis(factory) -> str:
             pdf_path="paper.pdf",
             status="ready",
             analysis_generation=1,
+            analysis_mode="ai",
         )
         db.add(paper)
         db.flush()
@@ -55,6 +56,7 @@ def seed_successful_analysis(factory) -> str:
                 conclusion="Previous conclusion",
                 limitations_or_notes="Previous limitations",
                 section_citations={},
+                generation_mode="ai",
             )
         )
         db.add(
@@ -124,10 +126,11 @@ def test_successful_reanalysis_swaps_generation_atomically(tmp_path, monkeypatch
         paper = db.get(Paper, paper_id)
         chunks = db.query(PaperChunk).filter(PaperChunk.paper_id == paper_id).all()
         assert paper.analysis_generation == 2
-        assert paper.status == "ready"
+        assert paper.status == "degraded"
+        assert paper.analysis_mode == "mock"
         assert {chunk.analysis_generation for chunk in chunks} == {2}
         assert all(chunk.page_start == chunk.page_end == 4 for chunk in chunks)
-        assert db.get(Job, job.id).status == JobStatus.COMPLETED
+        assert db.get(Job, job.id).status == JobStatus.COMPLETED_WITH_WARNINGS
         assert db.query(PaperSummary).filter(PaperSummary.paper_id == paper_id).one().conclusion != "Previous conclusion"
     assert len(store.upserted) == 1
     assert len(store.deleted) == 1
@@ -148,10 +151,39 @@ def test_failed_reanalysis_preserves_previous_notes(tmp_path, monkeypatch) -> No
         paper = db.get(Paper, paper_id)
         assert paper.analysis_generation == 1
         assert paper.status == "ready"
-        assert "generation 2 failed" in paper.analysis_warning
-        assert db.get(Job, job.id).status == JobStatus.FAILED
+        assert "source-extractive fallback" in paper.analysis_warning
+        assert db.get(Job, job.id).status == JobStatus.COMPLETED_WITH_WARNINGS
         assert db.query(PaperChunk).filter(PaperChunk.paper_id == paper_id).one().text.startswith("Previous")
         assert db.query(PaperSummary).filter(PaperSummary.paper_id == paper_id).one().conclusion == "Previous conclusion"
+    engine.dispose()
+
+
+def test_first_analysis_provider_failure_persists_extractive_result(tmp_path, monkeypatch) -> None:
+    engine, factory = analysis_database(tmp_path)
+    with factory() as db:
+        paper = Paper(source="upload", title="New paper", authors=[], pdf_path="paper.pdf", status="queued")
+        db.add(paper)
+        db.commit()
+        paper_id = paper.id
+        job = analysis.enqueue_analysis_job(db, paper_id, auto_reset=True)
+        job_id = job.id
+    store = configure_success(monkeypatch)
+    monkeypatch.setattr(analysis, "get_ai_provider", lambda: FailingSummaryProvider())
+
+    analysis.process_analysis_job(job_id, session_factory=factory)
+
+    with factory() as db:
+        paper = db.get(Paper, paper_id)
+        summary = db.query(PaperSummary).filter(PaperSummary.paper_id == paper_id).one()
+        completed_job = db.get(Job, job_id)
+        assert paper.status == "degraded"
+        assert paper.analysis_mode == "extractive"
+        assert summary.generation_mode == "extractive"
+        assert summary.warning and "summary provider failed" in summary.warning
+        assert all(summary.section_citations.values())
+        assert completed_job.status == JobStatus.COMPLETED_WITH_WARNINGS
+        assert completed_job.warning_message
+    assert store.upserted
     engine.dispose()
 
 
@@ -218,7 +250,7 @@ class RecordingVectorStore:
 
 class FailingSummaryProvider(MockProvider):
     def generate_summary(self, paper_title, chunks):
-        raise RuntimeError("summary provider failed")
+        raise AIProviderError("summary provider failed")
 
 
 class ModelMustNotRun:

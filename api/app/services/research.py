@@ -10,10 +10,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session, selectinload
 
 from app.ai import (
+    AIProviderError,
     BatchSummary,
     EvidenceRegistry,
-    MockProvider,
+    EvidenceValidationError,
     ResearchBrief,
+    build_extractive_batch,
+    build_extractive_brief,
+    deterministic_research_plan,
     get_ai_provider,
     validate_batch_output,
     validate_brief_evidence,
@@ -271,9 +275,14 @@ def plan_project(db: Session, project_id: str, agent_run: AgentRun | None = None
     step = start_agent_step(db, agent_run, "plan_search", {"question": project.question})
     try:
         plan = get_ai_provider().plan_research(project.question)
-    except Exception as exc:
-        fail_agent_step(db, step, exc)
-        raise
+    except AIProviderError as exc:
+        record_fallback(
+            "research.plan_project",
+            "deterministic_research_plan",
+            str(exc),
+            {"project_id": project_id},
+        )
+        plan = deterministic_research_plan(project.question)
     project.generated_queries = plan.search_queries
     project.inclusion_criteria = plan.inclusion_criteria
     project.status = "planned"
@@ -784,7 +793,12 @@ def process_synthesis_job(
             heartbeat()
         job = db.get(Job, job_id)
         if job is not None:
-            job.status = JobStatus.COMPLETED
+            project = db.get(ResearchProject, job.project_id)
+            warnings = list((project.synthesis_json or {}).get("warnings") or []) if project is not None else []
+            job.status = JobStatus.COMPLETED_WITH_WARNINGS if project is not None and project.status == "degraded" else JobStatus.COMPLETED
+            job.warning_message = "; ".join(warnings) or (
+                "Synthesis completed with degraded evidence." if job.status == JobStatus.COMPLETED_WITH_WARNINGS else None
+            )
             job.finished_at = now()
             job.lease_expires_at = None
             db.add(job)
@@ -858,7 +872,12 @@ def reconcile_project(
             JobStatus.COMPLETED,
             JobStatus.COMPLETED_WITH_WARNINGS,
         }:
-            project.status = "degraded" if any(paper.status == "degraded" for paper in papers) else "done"
+            synthesis_mode = (project.synthesis_json or {}).get("generation_mode")
+            project.status = (
+                "degraded"
+                if synthesis_mode in {"extractive", "mock"} or any(paper.status == "degraded" for paper in papers)
+                else "done"
+            )
         elif enqueue_synthesis:
             db.add(project)
             db.commit()
@@ -907,10 +926,16 @@ def synthesize_project(
         brief = get_ai_provider().synthesize_collection(project.question, contexts, memory_payloads)
         ensure_cited_brief(brief)
         validate_brief_evidence(brief, EvidenceRegistry.from_paper_contexts(contexts))
-    except Exception as exc:
-        fail_agent_step(db, step, exc)
-        set_agent_run_status(db, agent_run, "failed", str(exc))
-        raise
+    except (AIProviderError, EvidenceValidationError, HTTPException) as exc:
+        warning = f"AI synthesis unavailable; source-extractive evidence packet used: {exc}"
+        record_fallback(
+            "research.synthesize_collection",
+            "source_extractive_evidence_packet",
+            str(exc),
+            {"project_id": project_id, "paper_count": len(contexts)},
+        )
+        brief = build_extractive_brief(project.question, contexts, warning)
+        validate_brief_evidence(brief, EvidenceRegistry.from_paper_contexts(contexts))
     project = db.execute(
         select(ResearchProject).where(ResearchProject.id == project_id).with_for_update()
     ).scalar_one()
@@ -919,7 +944,13 @@ def synthesize_project(
             f"Synthesis generation {expected_generation} was superseded by {project.synthesis_generation}."
         )
     project.synthesis_json = brief.model_dump()
-    project.status = "done"
+    project.status = (
+        "degraded"
+        if brief.generation_mode != "ai"
+        or brief.warnings
+        or any(link.paper is not None and link.paper.status == "degraded" for link in project.papers)
+        else "done"
+    )
     db.add(project)
     db.commit()
     complete_agent_step(
@@ -931,6 +962,8 @@ def synthesize_project(
             "suggested_experiments": len(brief.suggested_experiments),
             "suggested_research_directions": len(brief.suggested_research_directions),
             "memory_count": len(memory_payloads),
+            "generation_mode": brief.generation_mode,
+            "warnings": brief.warnings,
             "status": project.status,
         },
     )
@@ -1002,9 +1035,10 @@ def summarize_batch_papers(db: Session, paper_ids: list[str], goal: str) -> Batc
         output = get_ai_provider().summarize_batch(goal, contexts)
         validate_batch_output(output, requested_ids)
         return output
-    except Exception as exc:
-        record_fallback("research.summarize_batch", "mock.summarize_batch", str(exc), {"paper_count": len(contexts)})
-        output = MockProvider().summarize_batch(goal, contexts)
+    except (AIProviderError, EvidenceValidationError) as exc:
+        warning = f"AI batch summary unavailable; stored summaries used: {exc}"
+        record_fallback("research.summarize_batch", "stored_paper_summaries", str(exc), {"paper_count": len(contexts)})
+        output = build_extractive_batch(goal, contexts, warning)
         validate_batch_output(output, requested_ids)
         return output
 

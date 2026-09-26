@@ -3,14 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import get_settings
-from app.services.fallbacks import record_fallback
 
 try:
     from langchain_core.prompts import ChatPromptTemplate
@@ -65,6 +64,14 @@ class EvidenceValidationError(ValueError):
     pass
 
 
+class AIProviderError(RuntimeError):
+    """An AI provider could not complete an operation."""
+
+
+class AIOutputValidationError(AIProviderError):
+    """Both structured-output attempts failed parsing or evidence validation."""
+
+
 class ResearchBrief(BaseModel):
     executive_summary: str
     key_findings: list[PaperFinding]
@@ -72,6 +79,8 @@ class ResearchBrief(BaseModel):
     conflicts_or_gaps: list[PaperFinding]
     suggested_experiments: list[PaperFinding]
     suggested_research_directions: list[PaperFinding]
+    generation_mode: str = "ai"
+    warnings: list[str] = Field(default_factory=list)
 
 
 class BatchPaperSummary(BaseModel):
@@ -88,6 +97,8 @@ class BatchPaperSummary(BaseModel):
 class BatchSummary(BaseModel):
     overall_takeaway: str
     papers: list[BatchPaperSummary]
+    generation_mode: str = "ai"
+    warnings: list[str] = Field(default_factory=list)
 
 
 @dataclass
@@ -95,12 +106,16 @@ class SummaryPayload:
     sections: dict[str, str]
     section_citations: dict[str, list[dict[str, str | int]]]
     highlights: list[dict[str, Any]]
+    generation_mode: str = "ai"
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ChatPayload:
     answer: str
     citations: list[dict[str, str | int]]
+    generation_mode: str = "ai"
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -160,19 +175,7 @@ class MockProvider(AIProvider):
         )
 
     def plan_research(self, question: str) -> ResearchPlan:
-        compact = " ".join(question.split())
-        return ResearchPlan(
-            search_queries=[
-                compact,
-                f"{compact} survey",
-                f"{compact} benchmark",
-            ],
-            inclusion_criteria=[
-                "Paper directly addresses the research question.",
-                "Paper includes methods, experiments, or evaluations.",
-                "Paper provides evidence useful for comparing approaches.",
-            ],
-        )
+        return deterministic_research_plan(question)
 
     def select_relevant_candidates(
         self,
@@ -226,7 +229,13 @@ class MockProvider(AIProvider):
                 }
             )
 
-        return SummaryPayload(sections=sections, section_citations=section_citations, highlights=highlights)
+        return SummaryPayload(
+            sections=sections,
+            section_citations=section_citations,
+            highlights=highlights,
+            generation_mode="mock",
+            warnings=["AI_PROVIDER=mock; this output is deterministic demonstration data."],
+        )
 
     def synthesize_collection(
         self,
@@ -274,6 +283,8 @@ class MockProvider(AIProvider):
                     citations=findings[0].citations,
                 )
             ],
+            generation_mode="mock",
+            warnings=["AI_PROVIDER=mock; this brief is deterministic demonstration data."],
         )
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
@@ -295,6 +306,8 @@ class MockProvider(AIProvider):
         return BatchSummary(
             overall_takeaway=f"Summarized {len(papers)} papers for: {goal}",
             papers=papers,
+            generation_mode="mock",
+            warnings=["AI_PROVIDER=mock; this batch summary is deterministic demonstration data."],
         )
 
     def answer_question(
@@ -308,6 +321,8 @@ class MockProvider(AIProvider):
             return ChatPayload(
                 answer="I do not have enough grounded evidence from the paper to answer that reliably.",
                 citations=[],
+                generation_mode="mock",
+                warnings=["AI_PROVIDER=mock; this answer is deterministic demonstration data."],
             )
 
         lead = context_chunks[0]
@@ -317,41 +332,47 @@ class MockProvider(AIProvider):
         )
         if len(context_chunks) > 1:
             answer += f" A second supporting passage appears on page {context_chunks[1]['page_start']}."
-        return ChatPayload(answer=answer, citations=[make_citation(chunk) for chunk in context_chunks[:2]])
+        return ChatPayload(
+            answer=answer,
+            citations=[make_citation(chunk) for chunk in context_chunks[:2]],
+            generation_mode="mock",
+            warnings=["AI_PROVIDER=mock; this answer is deterministic demonstration data."],
+        )
 
 
-class LangChainProvider(MockProvider):
+class LangChainProvider(AIProvider):
     def __init__(self) -> None:
         if ChatPromptTemplate is None:
-            raise RuntimeError("LangChain dependencies are not installed")
-        self.chat_model = build_chat_model()
-        self.embedding_model = build_embedding_model()
+            raise AIProviderError("LangChain dependencies are not installed")
+        try:
+            self.chat_model = build_chat_model()
+            self.embedding_model = build_embedding_model()
+        except Exception as exc:
+            raise AIProviderError(f"Could not initialize {settings.ai_provider}: {exc}") from exc
         if settings.ai_provider == "openai":
             self.embedding_fingerprint = f"openai:{settings.openai_embed_model}"
         elif settings.ai_provider == "ollama":
             self.embedding_fingerprint = f"ollama:{settings.ollama_embed_model}"
         else:  # pragma: no cover - guarded by get_ai_provider
-            raise RuntimeError(f"Unsupported AI provider: {settings.ai_provider}")
+            raise AIProviderError(f"Unsupported AI provider: {settings.ai_provider}")
 
     def embed_texts(self, texts: list[str]) -> EmbeddingResult:
         if self.embedding_model is None:
-            raise RuntimeError(f"No embedding model is configured for {settings.ai_provider}")
-        vectors = self.embedding_model.embed_documents(texts)
+            raise AIProviderError(f"No embedding model is configured for {settings.ai_provider}")
+        try:
+            vectors = self.embedding_model.embed_documents(texts)
+        except Exception as exc:
+            raise AIProviderError(f"{settings.ai_provider} embedding failed: {exc}") from exc
         return EmbeddingResult(vectors=vectors, fingerprint=self.embedding_fingerprint)
 
     def plan_research(self, question: str) -> ResearchPlan:
-        try:
-            offered_ids = {candidate["arxiv_id"] for candidate in candidates}
-            return invoke_structured_json(
-                self.chat_model,
-                ResearchPlan,
-                "Plan a focused arXiv literature search with short keyword-style search queries and concrete inclusion criteria.",
-                "Research question: {question}",
-                {"question": question},
-            )
-        except Exception as exc:
-            record_fallback("ai.plan_research", "mock.plan_research", str(exc))
-            return super().plan_research(question)
+        return invoke_structured_json(
+            self.chat_model,
+            ResearchPlan,
+            "Plan a focused arXiv literature search with short keyword-style search queries and concrete inclusion criteria.",
+            "Research question: {question}",
+            {"question": question},
+        )
 
     def select_relevant_candidates(
         self,
@@ -359,49 +380,43 @@ class LangChainProvider(MockProvider):
         candidates: list[dict[str, Any]],
         memory_context: list[dict[str, Any]] | None = None,
     ) -> CandidateSelection:
-        try:
-            return invoke_structured_json(
-                self.chat_model,
-                CandidateSelection,
-                "Select the 3 to 5 most relevant arXiv candidates for the research question. Use memory as a weak preference signal, but do not select irrelevant papers just because memory mentions related terms.",
-                "Question: {question}\nMemory signals:\n{memory_context}\nCandidates:\n{candidates}",
-                {"question": question, "memory_context": format_memories(memory_context or []), "candidates": format_candidates(candidates)},
-                validator=lambda output: validate_candidate_selection(output, offered_ids),
-            )
-        except Exception as exc:
-            record_fallback("ai.select_relevant_candidates", "mock.select_relevant_candidates", str(exc), {"candidate_count": len(candidates)})
-            return super().select_relevant_candidates(question, candidates, memory_context)
+        offered_ids = {candidate["arxiv_id"] for candidate in candidates}
+        return invoke_structured_json(
+            self.chat_model,
+            CandidateSelection,
+            "Select the 3 to 5 most relevant arXiv candidates for the research question. Use memory as a weak preference signal, but do not select irrelevant papers just because memory mentions related terms.",
+            "Question: {question}\nMemory signals:\n{memory_context}\nCandidates:\n{candidates}",
+            {"question": question, "memory_context": format_memories(memory_context or []), "candidates": format_candidates(candidates)},
+            validator=lambda output: validate_candidate_selection(output, offered_ids),
+        )
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
-        try:
-            registry = EvidenceRegistry.from_chunks(chunks[:10])
-            output = invoke_structured_json(
-                self.chat_model,
-                PaperSummaryOutput,
-                "Summarize the paper using only supplied chunks. Every section and highlight must cite supplied pages/chunks.",
-                "Title: {title}\nChunks:\n{context}",
-                {"title": paper_title, "context": format_chunks(chunks[:10])},
-                validator=lambda value: validate_summary_evidence(value, registry),
-            )
-            section_names = (
-                "problem_or_hypothesis",
-                "approach",
-                "experiments",
-                "results",
-                "conclusion",
-                "limitations_or_notes",
-            )
-            return SummaryPayload(
-                sections={name: getattr(output, name).text for name in section_names},
-                section_citations={
-                    name: [citation.model_dump(exclude_none=True) for citation in getattr(output, name).citations]
-                    for name in section_names
-                },
-                highlights=[highlight.model_dump() for highlight in output.highlights],
-            )
-        except Exception as exc:
-            record_fallback("ai.generate_summary", "mock.generate_summary", str(exc), {"chunk_count": len(chunks), "paper_title": paper_title})
-            return super().generate_summary(paper_title, chunks)
+        registry = EvidenceRegistry.from_chunks(chunks[:10])
+        output = invoke_structured_json(
+            self.chat_model,
+            PaperSummaryOutput,
+            "Summarize the paper using only supplied chunks. Every section and highlight must cite supplied pages/chunks.",
+            "Title: {title}\nChunks:\n{context}",
+            {"title": paper_title, "context": format_chunks(chunks[:10])},
+            validator=lambda value: validate_summary_evidence(value, registry),
+        )
+        section_names = (
+            "problem_or_hypothesis",
+            "approach",
+            "experiments",
+            "results",
+            "conclusion",
+            "limitations_or_notes",
+        )
+        return SummaryPayload(
+            sections={name: getattr(output, name).text for name in section_names},
+            section_citations={
+                name: [citation.model_dump(exclude_none=True) for citation in getattr(output, name).citations]
+                for name in section_names
+            },
+            highlights=[highlight.model_dump() for highlight in output.highlights],
+            generation_mode="ai",
+        )
 
     def synthesize_collection(
         self,
@@ -409,34 +424,32 @@ class LangChainProvider(MockProvider):
         paper_contexts: list[dict[str, Any]],
         memory_context: list[dict[str, Any]] | None = None,
     ) -> ResearchBrief:
-        try:
-            registry = EvidenceRegistry.from_paper_contexts(paper_contexts)
-            return invoke_structured_json(
-                self.chat_model,
-                ResearchBrief,
-                "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence. Use memory only to prioritize emphasis; do not cite memory as evidence.",
-                "Question: {question}\nMemory signals:\n{memory_context}\nPaper evidence:\n{context}",
-                {"question": question, "memory_context": format_memories(memory_context or []), "context": format_paper_contexts(paper_contexts)},
-                validator=lambda output: validate_brief_evidence(output, registry),
-            )
-        except Exception as exc:
-            record_fallback("ai.synthesize_collection", "mock.synthesize_collection", str(exc), {"paper_count": len(paper_contexts)})
-            return super().synthesize_collection(question, paper_contexts, memory_context)
+        registry = EvidenceRegistry.from_paper_contexts(paper_contexts)
+        output = invoke_structured_json(
+            self.chat_model,
+            ResearchBrief,
+            "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence. Use memory only to prioritize emphasis; do not cite memory as evidence.",
+            "Question: {question}\nMemory signals:\n{memory_context}\nPaper evidence:\n{context}",
+            {"question": question, "memory_context": format_memories(memory_context or []), "context": format_paper_contexts(paper_contexts)},
+            validator=lambda value: validate_brief_evidence(value, registry),
+        )
+        output.generation_mode = "ai"
+        output.warnings = []
+        return output
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
-        try:
-            expected_ids = {context["paper_id"] for context in paper_contexts}
-            return invoke_structured_json(
-                self.chat_model,
-                BatchSummary,
-                "Summarize a batch of research papers into a comparison table using only supplied evidence.",
-                "Goal: {goal}\nPaper evidence:\n{context}",
-                {"goal": goal, "context": format_paper_contexts(paper_contexts)},
-                validator=lambda output: validate_batch_output(output, expected_ids),
-            )
-        except Exception as exc:
-            record_fallback("ai.summarize_batch", "mock.summarize_batch", str(exc), {"paper_count": len(paper_contexts)})
-            return super().summarize_batch(goal, paper_contexts)
+        expected_ids = {context["paper_id"] for context in paper_contexts}
+        output = invoke_structured_json(
+            self.chat_model,
+            BatchSummary,
+            "Summarize a batch of research papers into a comparison table using only supplied evidence.",
+            "Goal: {goal}\nPaper evidence:\n{context}",
+            {"goal": goal, "context": format_paper_contexts(paper_contexts)},
+            validator=lambda value: validate_batch_output(value, expected_ids),
+        )
+        output.generation_mode = "ai"
+        output.warnings = []
+        return output
 
     def answer_question(
         self,
@@ -445,32 +458,29 @@ class LangChainProvider(MockProvider):
         context_chunks: list[dict[str, Any]],
         history: list[dict[str, str]],
     ) -> ChatPayload:
-        try:
-            registry = EvidenceRegistry.from_chunks(context_chunks)
-            output = invoke_structured_json(
-                self.chat_model,
-                ChatOutput,
-                "Answer using only the supplied paper chunks. If evidence is weak, say so. Include citations.",
-                "Title: {title}\nQuestion: {question}\nHistory: {history}\nChunks:\n{context}",
-                {
-                    "title": paper_title,
-                    "question": question,
-                    "history": history[-6:],
-                    "context": format_chunks(context_chunks),
-                },
-                validator=lambda value: validate_citations(
-                    value.citations,
-                    registry,
-                    require_at_least_one=False,
-                ),
-            )
-            return ChatPayload(
-                answer=output.answer,
-                citations=[citation.model_dump(exclude_none=True) for citation in output.citations],
-            )
-        except Exception as exc:
-            record_fallback("ai.answer_question", "mock.answer_question", str(exc), {"chunk_count": len(context_chunks)})
-            return super().answer_question(paper_title, question, context_chunks, history)
+        registry = EvidenceRegistry.from_chunks(context_chunks)
+        output = invoke_structured_json(
+            self.chat_model,
+            ChatOutput,
+            "Answer using only the supplied paper chunks. If evidence is weak, say so. Include citations.",
+            "Title: {title}\nQuestion: {question}\nHistory: {history}\nChunks:\n{context}",
+            {
+                "title": paper_title,
+                "question": question,
+                "history": history[-6:],
+                "context": format_chunks(context_chunks),
+            },
+            validator=lambda value: validate_citations(
+                value.citations,
+                registry,
+                require_at_least_one=False,
+            ),
+        )
+        return ChatPayload(
+            answer=output.answer,
+            citations=[citation.model_dump(exclude_none=True) for citation in output.citations],
+            generation_mode="ai",
+        )
 
 
 class CitedSummarySection(BaseModel):
@@ -793,16 +803,23 @@ def invoke_structured_json(
         f"Example valid JSON:\n{example}"
     )
 
-    try:
-        result = invoke_structured_once(chat_model, output_model, system_prompt, human_template, payload)
-        if validator is not None:
-            validator(result)
-        return result
-    except Exception:
-        result = invoke_structured_once(chat_model, output_model, retry_system_prompt, human_template, payload)
-        if validator is not None:
-            validator(result)
-        return result
+    first_error: Exception | None = None
+    for attempt, attempt_prompt in enumerate((system_prompt, retry_system_prompt), start=1):
+        try:
+            result = invoke_structured_once(chat_model, output_model, attempt_prompt, human_template, payload)
+            if validator is not None:
+                validator(result)
+            return result
+        except Exception as exc:  # the second failure is converted into a stable domain error
+            if attempt == 1:
+                first_error = exc
+                continue
+            message = f"Structured generation failed twice: first={first_error}; second={exc}"
+            if isinstance(exc, (EvidenceValidationError, ValidationError)):
+                raise AIOutputValidationError(message) from exc
+            raise AIProviderError(message) from exc
+
+    raise AIProviderError("Structured generation did not run")  # pragma: no cover
 
 
 def invoke_structured_once(
@@ -838,6 +855,146 @@ def build_embedding_model() -> Any:
 def make_citation(chunk: dict[str, Any]) -> dict[str, str | int]:
     excerpt = chunk["text"].replace("\n", " ").strip()[:220]
     return {"page": chunk["page_start"], "excerpt": excerpt, "chunk_id": chunk["id"]}
+
+
+def deterministic_research_plan(question: str) -> ResearchPlan:
+    compact = " ".join(question.split())
+    return ResearchPlan(
+        search_queries=[compact, f"{compact} survey", f"{compact} benchmark"],
+        inclusion_criteria=[
+            "Paper directly addresses the research question.",
+            "Paper includes methods, experiments, or evaluations.",
+            "Paper provides evidence useful for comparing approaches.",
+        ],
+    )
+
+
+def build_extractive_summary(
+    paper_title: str,
+    chunks: list[dict[str, Any]],
+    warning: str,
+) -> SummaryPayload:
+    if not chunks:
+        raise EvidenceValidationError("Cannot build an extractive summary without paper chunks")
+    section_names = (
+        "problem_or_hypothesis",
+        "approach",
+        "experiments",
+        "results",
+        "conclusion",
+        "limitations_or_notes",
+    )
+    selected = [chunks[index % len(chunks)] for index in range(len(section_names))]
+    sections = {
+        name: f"Source extract from {paper_title}: {chunk['text'].replace(chr(10), ' ').strip()[:600]}"
+        for name, chunk in zip(section_names, selected, strict=True)
+    }
+    section_citations = {
+        name: [make_citation(chunk)] for name, chunk in zip(section_names, selected, strict=True)
+    }
+    highlights = [
+        {
+            "position": index,
+            "label": f"Source extract {index + 1}",
+            "explanation": chunk["text"].replace("\n", " ").strip()[:400],
+            "citations": [make_citation(chunk)],
+        }
+        for index, chunk in enumerate(chunks[:3])
+    ]
+    return SummaryPayload(
+        sections=sections,
+        section_citations=section_citations,
+        highlights=highlights,
+        generation_mode="extractive",
+        warnings=[warning],
+    )
+
+
+def build_extractive_chat(
+    paper_title: str,
+    question: str,
+    chunks: list[dict[str, Any]],
+    warning: str,
+) -> ChatPayload:
+    if not chunks:
+        return ChatPayload(
+            answer=f"No grounded passage from {paper_title} was available to answer: {question}",
+            citations=[],
+            generation_mode="extractive",
+            warnings=[warning],
+        )
+    selected = chunks[:2]
+    extracts = "\n\n".join(chunk["text"].replace("\n", " ").strip()[:500] for chunk in selected)
+    return ChatPayload(
+        answer=f"The AI provider was unavailable. Relevant source extracts from {paper_title}:\n\n{extracts}",
+        citations=[make_citation(chunk) for chunk in selected],
+        generation_mode="extractive",
+        warnings=[warning],
+    )
+
+
+def build_extractive_brief(
+    question: str,
+    paper_contexts: list[dict[str, Any]],
+    warning: str,
+) -> ResearchBrief:
+    findings: list[PaperFinding] = []
+    for context in paper_contexts:
+        if not context.get("chunks"):
+            raise EvidenceValidationError(
+                f"Cannot build a cited extractive brief for paper {context['paper_id']} without chunks"
+            )
+        chunk = context["chunks"][0]
+        citation = EvidenceCitation(
+            paper_id=context["paper_id"],
+            title=context["title"],
+            **make_citation(chunk),
+        )
+        findings.append(
+            PaperFinding(
+                label=context["title"],
+                summary=chunk["text"].replace("\n", " ").strip()[:600],
+                citations=[citation],
+            )
+        )
+    return ResearchBrief(
+        executive_summary=(
+            f"AI synthesis was unavailable for '{question}'. This degraded brief contains only source extracts."
+        ),
+        key_findings=findings,
+        evidence_table=[finding.model_copy(deep=True) for finding in findings],
+        conflicts_or_gaps=[],
+        suggested_experiments=[],
+        suggested_research_directions=[],
+        generation_mode="extractive",
+        warnings=[warning],
+    )
+
+
+def build_extractive_batch(
+    goal: str,
+    paper_contexts: list[dict[str, Any]],
+    warning: str,
+) -> BatchSummary:
+    papers = [
+        BatchPaperSummary(
+            paper_id=context["paper_id"],
+            title=context["title"],
+            main_idea=context["summary"],
+            problem_or_hypothesis=context["summary"],
+            experiments="Not regenerated; refer to the stored paper summary.",
+            models_and_datasets="Not regenerated; refer to the stored paper summary.",
+            results=context["summary"],
+            conclusions=context["summary"],
+        )
+        for context in paper_contexts
+    ]
+    return BatchSummary(
+        overall_takeaway=f"AI batch synthesis was unavailable for '{goal}'. Showing stored paper summaries.",
+        papers=papers,
+        generation_mode="extractive",
+        warnings=[warning],
+    )
 
 
 def first_context_citation(context: dict[str, Any]) -> EvidenceCitation:
@@ -910,4 +1067,4 @@ def get_ai_provider() -> AIProvider:
         return LangChainProvider()
     if settings.ai_provider == "mock":
         return MockProvider()
-    raise RuntimeError(f"Unknown AI_PROVIDER={settings.ai_provider}")
+    raise AIProviderError(f"Unknown AI_PROVIDER={settings.ai_provider}")

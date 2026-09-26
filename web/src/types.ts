@@ -4,6 +4,8 @@ export interface Citation {
   chunk_id?: string | null;
 }
 
+export type GenerationMode = "ai" | "extractive" | "mock" | "unknown_legacy";
+
 export interface PaperSearchResult {
   arxiv_id: string;
   title: string;
@@ -53,6 +55,8 @@ export interface PaperSummary {
   conclusion: string;
   limitations_or_notes: string;
   section_citations: Record<string, Citation[]>;
+  generation_mode: GenerationMode;
+  warning?: string | null;
 }
 
 export interface PaperDetail extends LibraryPaper {
@@ -103,6 +107,8 @@ export interface BatchPaperSummary {
 export interface BatchSummaryResponse {
   overall_takeaway: string;
   papers: BatchPaperSummary[];
+  generation_mode: GenerationMode;
+  warnings: string[];
 }
 
 export interface ChatMessage {
@@ -110,6 +116,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations: Citation[];
+  generation_mode?: GenerationMode | null;
+  warning?: string | null;
   created_at: string;
 }
 
@@ -118,6 +126,8 @@ export interface ChatResponse {
   answer: ChatMessage;
   citations: Citation[];
   retrieved_chunk_ids: string[];
+  generation_mode: GenerationMode;
+  warnings: string[];
 }
 
 export interface ResearchCandidate {
@@ -149,6 +159,8 @@ export interface ResearchBrief {
   conflicts_or_gaps: ResearchFinding[];
   suggested_experiments: ResearchFinding[];
   suggested_research_directions: ResearchFinding[];
+  generation_mode: GenerationMode;
+  warnings: string[];
 }
 
 export interface AgentStep {

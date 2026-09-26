@@ -30,7 +30,7 @@ def set_agent_run_status(db: Session, run: AgentRun | None, status: str, error_m
         return
     run.status = status
     run.error_message = error_message
-    if status in {"done", "failed"}:
+    if status in {"done", "degraded", "failed"}:
         run.finished_at = utc_now()
     db.add(run)
     db.commit()

@@ -143,6 +143,8 @@ class BatchPaperSummaryRead(BaseModel):
 class BatchSummaryResponse(BaseModel):
     overall_takeaway: str
     papers: list[BatchPaperSummaryRead]
+    generation_mode: str
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ArxivImportRequest(BaseModel):
@@ -161,6 +163,8 @@ class ChatMessageRead(BaseModel):
     role: str
     content: str
     citations: list[Citation]
+    generation_mode: str | None = None
+    warning: str | None = None
     created_at: datetime
 
 
@@ -169,3 +173,5 @@ class ChatResponse(BaseModel):
     answer: ChatMessageRead
     citations: list[Citation]
     retrieved_chunk_ids: list[str]
+    generation_mode: str
+    warnings: list[str] = Field(default_factory=list)

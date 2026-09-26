@@ -145,7 +145,7 @@ def test_structured_invocation_stops_after_two_invalid_attempts(monkeypatch) -> 
         return ResearchPlan(search_queries=["invalid"], inclusion_criteria=["Evidence"])
 
     monkeypatch.setattr(ai, "invoke_structured_once", fake_invoke)
-    with pytest.raises(EvidenceValidationError):
+    with pytest.raises(ai.AIOutputValidationError):
         ai.invoke_structured_json(
             object(),
             ResearchPlan,
@@ -239,10 +239,15 @@ def test_invalid_chat_citation_is_not_persisted(db_session, monkeypatch) -> None
     monkeypatch.setattr(analysis, "retrieve_paper_chunks", lambda *args, **kwargs: [chunk])
     monkeypatch.setattr(analysis, "get_ai_provider", lambda: InvalidChatProvider())
 
-    with pytest.raises(EvidenceValidationError):
-        analysis.run_chat_query(db_session, paper, session, "What is supported?")
+    response = analysis.run_chat_query(db_session, paper, session, "What is supported?")
 
-    assert db_session.query(ChatMessage).filter(ChatMessage.session_id == session.id).count() == 0
+    assert response.generation_mode == "extractive"
+    assert response.warnings
+    assert response.citations[0].chunk_id == chunk.id
+    messages = db_session.query(ChatMessage).filter(ChatMessage.session_id == session.id).all()
+    assert len(messages) == 2
+    assert messages[1].generation_mode == "extractive"
+    assert messages[1].citations[0]["chunk_id"] == chunk.id
 
 
 class InvalidChatProvider:
