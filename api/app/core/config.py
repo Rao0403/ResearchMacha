@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import computed_field
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     database_url: str | None = None
 
     upload_dir: str = "api/uploads"
+    max_upload_bytes: int = Field(default=50_000_000, gt=0)
+    max_batch_files: int = Field(default=10, gt=0)
+    max_pdf_pages: int = Field(default=500, gt=0)
     job_worker_enabled: bool = True
     job_worker_concurrency: int = 1
     job_worker_poll_seconds: float = 1

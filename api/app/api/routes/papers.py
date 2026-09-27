@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.core.config import get_settings
 from app.models.paper import Highlight, Job, Paper, PaperSummary
 from app.schemas.paper import (
     ArxivImportRequest,
@@ -29,13 +30,15 @@ from app.services.arxiv import fetch_arxiv_entry, search_arxiv
 from app.services.papers import (
     create_chat_session_if_missing,
     create_or_update_paper_from_arxiv,
-    create_uploaded_paper,
+    create_uploaded_papers_with_jobs,
     get_paper_or_404,
+    validate_paper_metadata,
 )
 from app.services.research import summarize_batch_papers
-from app.services.storage import save_upload_file
+from app.services.storage import PdfIngestionError, StagedPdf, stage_upload_pdf
 
 router = APIRouter()
+settings = get_settings()
 
 
 @router.get("/papers/search", response_model=list[PaperSearchResult])
@@ -52,7 +55,12 @@ def import_arxiv_paper(
         entry = fetch_arxiv_entry(payload.arxiv_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    paper, _ = create_or_update_paper_from_arxiv(db, entry)
+    try:
+        paper, _ = create_or_update_paper_from_arxiv(db, entry)
+    except PdfIngestionError as exc:
+        raise ingestion_http_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "invalid_metadata", "message": str(exc)}) from exc
     job = enqueue_analysis_job(db, paper.id, auto_reset=True)
     return UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job)
 
@@ -67,10 +75,25 @@ def upload_paper(
     if file.content_type not in {"application/pdf", "application/octet-stream"}:
         raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
 
-    stored_path = save_upload_file(file)
     author_list = [part.strip() for part in (authors or "").split(",") if part.strip()]
-    paper = create_uploaded_paper(db, title=title or Path(file.filename or "uploaded-paper").stem, authors=author_list, pdf_path=stored_path)
-    job = enqueue_analysis_job(db, paper.id, auto_reset=True)
+    paper_title = title or Path(file.filename or "uploaded-paper").stem
+    try:
+        paper_title, author_list = validate_paper_metadata(paper_title, author_list)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "invalid_metadata", "message": str(exc)}) from exc
+    try:
+        staged = stage_upload_pdf(file)
+    except PdfIngestionError as exc:
+        raise ingestion_http_error(exc) from exc
+    try:
+        stored_path = staged.publish()
+        [(paper, job)] = create_uploaded_papers_with_jobs(db, [(paper_title, author_list, stored_path)])
+    except Exception as exc:
+        staged.cleanup()
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "upload_persistence_failed", "message": "Could not persist uploaded paper"},
+        ) from exc
     return UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job)
 
 
@@ -81,17 +104,58 @@ def batch_upload_papers(
 ) -> BatchUploadResponse:
     if not files:
         raise HTTPException(status_code=400, detail="Upload at least one PDF")
+    if len(files) > settings.max_batch_files:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "batch_too_large", "message": f"Upload at most {settings.max_batch_files} PDFs"},
+        )
 
-    items: list[UploadPaperResponse] = []
+    metadata: list[tuple[str, list[str]]] = []
     for file in files:
         if file.content_type not in {"application/pdf", "application/octet-stream"}:
             raise HTTPException(status_code=400, detail=f"Only PDF uploads are supported: {file.filename}")
-        stored_path = save_upload_file(file)
-        paper = create_uploaded_paper(db, title=Path(file.filename or "uploaded-paper").stem, authors=[], pdf_path=stored_path)
-        job = enqueue_analysis_job(db, paper.id, auto_reset=True)
-        items.append(UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job))
+        try:
+            paper_title, author_list = validate_paper_metadata(Path(file.filename or "uploaded-paper").stem, [])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={"code": "invalid_metadata", "message": str(exc)}) from exc
+        metadata.append((paper_title, author_list))
+
+    staged_pdfs: list[StagedPdf] = []
+    try:
+        for file in files:
+            staged_pdfs.append(stage_upload_pdf(file))
+    except PdfIngestionError as exc:
+        cleanup_staged_pdfs(staged_pdfs)
+        raise ingestion_http_error(exc) from exc
+
+    try:
+        stored_items = [
+            (paper_title, authors, staged.publish())
+            for (paper_title, authors), staged in zip(metadata, staged_pdfs, strict=True)
+        ]
+        created = create_uploaded_papers_with_jobs(db, stored_items)
+    except Exception as exc:
+        cleanup_staged_pdfs(staged_pdfs)
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "batch_persistence_failed", "message": "Could not persist PDF batch"},
+        ) from exc
+
+    items = [
+        UploadPaperResponse(paper=LibraryPaperRead.model_validate(paper), job=job)
+        for paper, job in created
+    ]
 
     return BatchUploadResponse(items=items)
+
+
+def cleanup_staged_pdfs(staged_pdfs: list[StagedPdf]) -> None:
+    for staged in staged_pdfs:
+        staged.cleanup()
+
+
+def ingestion_http_error(exc: PdfIngestionError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)})
 
 
 @router.post("/papers/batch-summary", response_model=BatchSummaryResponse)

@@ -185,3 +185,20 @@ def test_arxiv_source_key_resolves_versions_to_one_paper(db_session, monkeypatch
     assert first_paper.id == second_paper.id
     assert second_paper.source_key == "arxiv:2401.12345"
     assert db_session.query(Paper).count() == 1
+
+
+def test_arxiv_database_failure_removes_new_download(db_session, monkeypatch, tmp_path) -> None:
+    downloaded = tmp_path / "downloaded.pdf"
+
+    def fake_download(url, filename):
+        downloaded.write_bytes(b"%PDF-1.7")
+        return str(downloaded)
+
+    monkeypatch.setattr(paper_service, "save_remote_pdf", fake_download)
+    monkeypatch.setattr(db_session, "commit", lambda: (_ for _ in ()).throw(RuntimeError("database unavailable")))
+    entry = ArxivEntry("2401.99999", "Paper", [], "A", 2024, "pdf", "entry")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        paper_service.create_or_update_paper_from_arxiv(db_session, entry)
+
+    assert not downloaded.exists()
