@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -10,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.core.config import get_settings
 from app.models.paper import Highlight, Job, Paper, PaperSummary
+from app.models.states import JobStatus
 from app.schemas.paper import (
     ArxivImportRequest,
     BatchSummaryRequest,
@@ -22,6 +22,7 @@ from app.schemas.paper import (
     LibraryPaperRead,
     PaperDetailRead,
     PaperSearchResult,
+    PaperStatusRead,
     PaperSummaryResponse,
     UploadPaperResponse,
 )
@@ -170,12 +171,26 @@ def list_papers(db: Session = Depends(get_db)) -> list[Paper]:
 
 @router.get("/papers/{paper_id}", response_model=PaperDetailRead)
 def get_paper(paper_id: str, db: Session = Depends(get_db)) -> Paper:
+    return get_paper_or_404(db, paper_id)
+
+
+@router.get("/papers/{paper_id}/status", response_model=PaperStatusRead)
+def get_paper_status(paper_id: str, db: Session = Depends(get_db)) -> PaperStatusRead:
     paper = get_paper_or_404(db, paper_id)
-    paper.last_opened_at = datetime.now(UTC).replace(tzinfo=None)
-    db.add(paper)
-    db.commit()
-    db.refresh(paper)
-    return paper
+    active_job = (
+        db.query(Job)
+        .filter(Job.paper_id == paper_id, Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
+        .order_by(Job.created_at.desc())
+        .first()
+    )
+    return PaperStatusRead(
+        id=paper.id,
+        status=paper.status,
+        analysis_generation=paper.analysis_generation,
+        analysis_mode=paper.analysis_mode,
+        analysis_warning=paper.analysis_warning,
+        active_job=JobRead.model_validate(active_job) if active_job is not None else None,
+    )
 
 
 @router.post("/papers/{paper_id}/analyze", response_model=JobRead)

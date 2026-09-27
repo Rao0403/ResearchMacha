@@ -73,6 +73,14 @@ class AgentRunRead(BaseModel):
     steps: list[AgentStepRead] = Field(default_factory=list)
 
 
+class BlockingItemRead(BaseModel):
+    target_type: str
+    target_id: str
+    title: str
+    job_id: str | None
+    error: str | None
+
+
 class ResearchProjectRead(BaseModel):
     id: str
     question: str
@@ -88,4 +96,4 @@ class ResearchProjectRead(BaseModel):
     agent_run: AgentRunRead | None = None
     memory_signals: list[ResearchMemoryRead] = Field(default_factory=list)
     recent_jobs: list[JobRead] = Field(default_factory=list)
-    blocking_items: list[dict[str, Any]] = Field(default_factory=list)
+    blocking_items: list[BlockingItemRead] = Field(default_factory=list)

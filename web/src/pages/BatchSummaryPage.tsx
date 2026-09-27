@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { analyzePaper, batchUploadPapers, createBatchSummary, getPaper } from "../lib/api";
+import { analyzePaper, batchUploadPapers, createBatchSummary, getPaper, getPaperStatus } from "../lib/api";
 import type { BatchSummaryResponse, LibraryPaper } from "../types";
 
 export function BatchSummaryPage() {
@@ -18,9 +18,9 @@ export function BatchSummaryPage() {
       return;
     }
 
-    const hasRunningPapers = papers.some((paper) => !["ready", "failed"].includes(paper.status));
+    const hasRunningPapers = papers.some((paper) => !["ready", "degraded", "failed"].includes(paper.status));
     if (!hasRunningPapers) {
-      if (papers.every((paper) => paper.status === "ready") && !summary && !summarizing) {
+      if (papers.every((paper) => ["ready", "degraded"].includes(paper.status)) && !summary && !summarizing) {
         void runBatchSummary(papers);
       }
       return;
@@ -28,8 +28,12 @@ export function BatchSummaryPage() {
 
     const interval = window.setInterval(async () => {
       try {
-        const updated = await Promise.all(papers.map((paper) => getPaper(paper.id)));
-        setPapers(updated);
+        const statuses = await Promise.all(papers.map((paper) => getPaperStatus(paper.id)));
+        const statusesById = new Map(statuses.map((status) => [status.id, status]));
+        setPapers((current) => current.map((paper) => {
+          const status = statusesById.get(paper.id);
+          return status ? { ...paper, ...status } : paper;
+        }));
       } catch (error) {
         setMessage(getErrorMessage(error));
       }
@@ -236,7 +240,7 @@ function csvCell(value: string) {
 }
 
 function BatchStats({ papers }: { papers: LibraryPaper[] }) {
-  const ready = papers.filter((paper) => paper.status === "ready").length;
+  const ready = papers.filter((paper) => ["ready", "degraded"].includes(paper.status)).length;
   const failed = papers.filter((paper) => paper.status === "failed").length;
   const running = papers.length - ready - failed;
   return (

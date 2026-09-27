@@ -5,6 +5,7 @@ export interface Citation {
 }
 
 export type GenerationMode = "ai" | "extractive" | "mock" | "unknown_legacy";
+export type WarningMessage = string;
 
 export interface PaperSearchResult {
   arxiv_id: string;
@@ -24,7 +25,11 @@ export interface LibraryPaper {
   abstract?: string | null;
   year?: number | null;
   arxiv_id?: string | null;
+  source_key?: string | null;
   status: string;
+  analysis_generation: number;
+  analysis_mode: GenerationMode;
+  analysis_warning?: WarningMessage | null;
   created_at: string;
   updated_at: string;
   last_opened_at?: string | null;
@@ -56,7 +61,7 @@ export interface PaperSummary {
   limitations_or_notes: string;
   section_citations: Record<string, Citation[]>;
   generation_mode: GenerationMode;
-  warning?: string | null;
+  warning?: WarningMessage | null;
 }
 
 export interface PaperDetail extends LibraryPaper {
@@ -73,15 +78,33 @@ export interface PaperSummaryResponse {
 
 export interface Job {
   id: string;
-  paper_id: string;
+  paper_id?: string | null;
+  project_id?: string | null;
+  candidate_id?: string | null;
   job_type: string;
   status: string;
+  idempotency_key: string;
+  requested_generation?: number | null;
+  attempt_count: number;
+  worker_id?: string | null;
+  claimed_at?: string | null;
+  lease_expires_at?: string | null;
   error_message?: string | null;
+  warning_message?: WarningMessage | null;
   payload?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
   started_at?: string | null;
   finished_at?: string | null;
+}
+
+export interface PaperStatus {
+  id: string;
+  status: string;
+  analysis_generation: number;
+  analysis_mode: GenerationMode;
+  analysis_warning?: WarningMessage | null;
+  active_job?: Job | null;
 }
 
 export interface UploadPaperResponse {
@@ -108,7 +131,7 @@ export interface BatchSummaryResponse {
   overall_takeaway: string;
   papers: BatchPaperSummary[];
   generation_mode: GenerationMode;
-  warnings: string[];
+  warnings: WarningMessage[];
 }
 
 export interface ChatMessage {
@@ -117,7 +140,7 @@ export interface ChatMessage {
   content: string;
   citations: Citation[];
   generation_mode?: GenerationMode | null;
-  warning?: string | null;
+  warning?: WarningMessage | null;
   created_at: string;
 }
 
@@ -127,7 +150,7 @@ export interface ChatResponse {
   citations: Citation[];
   retrieved_chunk_ids: string[];
   generation_mode: GenerationMode;
-  warnings: string[];
+  warnings: WarningMessage[];
 }
 
 export interface ResearchCandidate {
@@ -160,7 +183,7 @@ export interface ResearchBrief {
   suggested_experiments: ResearchFinding[];
   suggested_research_directions: ResearchFinding[];
   generation_mode: GenerationMode;
-  warnings: string[];
+  warnings: WarningMessage[];
 }
 
 export interface AgentStep {
@@ -214,10 +237,21 @@ export interface ResearchProject {
   generated_queries: string[];
   inclusion_criteria: string[];
   synthesis_json?: ResearchBrief | null;
+  synthesis_generation: number;
   created_at: string;
   updated_at: string;
   candidates: ResearchCandidate[];
   papers: LibraryPaper[];
   agent_run?: AgentRun | null;
   memory_signals: ResearchMemory[];
+  recent_jobs: Job[];
+  blocking_items: BlockingItem[];
+}
+
+export interface BlockingItem {
+  target_type: string;
+  target_id: string;
+  title: string;
+  job_id?: string | null;
+  error?: string | null;
 }

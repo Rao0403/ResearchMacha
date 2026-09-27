@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
+
+from app.models.states import GenerationMode
+
+
+class WarningRead(RootModel[Annotated[str, Field(max_length=10_000)]]):
+    pass
 
 
 class Citation(BaseModel):
@@ -46,8 +53,8 @@ class LibraryPaperRead(BaseModel):
     source_key: str | None
     status: str
     analysis_generation: int
-    analysis_mode: str
-    analysis_warning: str | None
+    analysis_mode: GenerationMode
+    analysis_warning: WarningRead | None
     created_at: datetime
     updated_at: datetime
     last_opened_at: datetime | None
@@ -75,8 +82,8 @@ class PaperSummaryRead(BaseModel):
     conclusion: str
     limitations_or_notes: str
     section_citations: dict[str, list[Citation]]
-    generation_mode: str
-    warning: str | None
+    generation_mode: GenerationMode
+    warning: WarningRead | None
 
 
 class JobRead(BaseModel):
@@ -95,7 +102,7 @@ class JobRead(BaseModel):
     claimed_at: datetime | None
     lease_expires_at: datetime | None
     error_message: str | None
-    warning_message: str | None
+    warning_message: WarningRead | None
     payload: dict | None
     created_at: datetime
     updated_at: datetime
@@ -107,6 +114,15 @@ class PaperDetailRead(LibraryPaperRead):
     chunks: list[PaperChunkRead] = Field(default_factory=list)
     summary: PaperSummaryRead | None = None
     highlights: list[HighlightRead] = Field(default_factory=list)
+
+
+class PaperStatusRead(BaseModel):
+    id: str
+    status: str
+    analysis_generation: int
+    analysis_mode: GenerationMode
+    analysis_warning: WarningRead | None
+    active_job: JobRead | None = None
 
 
 class PaperSummaryResponse(BaseModel):
@@ -143,8 +159,8 @@ class BatchPaperSummaryRead(BaseModel):
 class BatchSummaryResponse(BaseModel):
     overall_takeaway: str
     papers: list[BatchPaperSummaryRead]
-    generation_mode: str
-    warnings: list[str] = Field(default_factory=list)
+    generation_mode: GenerationMode
+    warnings: list[WarningRead] = Field(default_factory=list)
 
 
 class ArxivImportRequest(BaseModel):
@@ -163,8 +179,8 @@ class ChatMessageRead(BaseModel):
     role: str
     content: str
     citations: list[Citation]
-    generation_mode: str | None = None
-    warning: str | None = None
+    generation_mode: GenerationMode | None = None
+    warning: WarningRead | None = None
     created_at: datetime
 
 
@@ -173,5 +189,5 @@ class ChatResponse(BaseModel):
     answer: ChatMessageRead
     citations: list[Citation]
     retrieved_chunk_ids: list[str]
-    generation_mode: str
-    warnings: list[str] = Field(default_factory=list)
+    generation_mode: GenerationMode
+    warnings: list[WarningRead] = Field(default_factory=list)

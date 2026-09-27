@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { PdfViewer } from "../components/PdfViewer";
-import { analyzePaper, getPaper, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
+import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
 import type { ChatMessage, Highlight, PaperDetail, PaperSummary, PaperSummaryResponse } from "../types";
 
 type ReaderTab = "notes" | "highlights" | "chat";
@@ -48,12 +48,20 @@ export function ReaderPage() {
   }, [routePaperId]);
 
   useEffect(() => {
-    if (!paper || paper.status === "ready" || paper.status === "failed") {
+    if (!paper || ["ready", "degraded", "failed"].includes(paper.status)) {
       return;
     }
 
-    const interval = window.setInterval(() => {
-      void loadPaper(paper.id, true);
+    const interval = window.setInterval(async () => {
+      try {
+        const nextStatus = await getPaperStatus(paper.id);
+        setPaper((current) => current && current.id === nextStatus.id ? { ...current, ...nextStatus } : current);
+        if (["ready", "degraded"].includes(nextStatus.status)) {
+          await loadPaper(nextStatus.id, true);
+        }
+      } catch (error) {
+        setMessage(getErrorMessage(error));
+      }
     }, 3500);
 
     return () => window.clearInterval(interval);
@@ -65,7 +73,7 @@ export function ReaderPage() {
       setPaper(nextPaper);
       setCurrentPage(1);
       setTargetPage(null);
-      if (nextPaper.status === "ready") {
+      if (["ready", "degraded"].includes(nextPaper.status)) {
         await loadSummary(nextPaper.id);
       } else if (!quiet) {
         setMessage("Analysis is queued or running. Notes will appear when ready.");
