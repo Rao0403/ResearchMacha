@@ -110,6 +110,57 @@ def test_summary_requires_citations_for_every_section_and_highlight() -> None:
     validate_summary_evidence(output, evidence_registry())
 
 
+def test_summary_draft_rejects_unknown_chunk_ids() -> None:
+    section = ai.SummarySectionDraft(text="Grounded", chunk_ids=["chunk-1"])
+    output = ai.PaperSummaryDraft(
+        problem_or_hypothesis=section,
+        approach=section,
+        experiments=section,
+        results=section,
+        conclusion=section,
+        limitations_or_notes=section,
+        highlights=[ai.SummaryHighlightDraft(label="Result", explanation="Grounded", chunk_ids=["invented"])],
+    )
+
+    with pytest.raises(EvidenceValidationError, match="unknown chunk IDs"):
+        ai.validate_summary_draft(output, evidence_registry())
+
+
+def test_summary_draft_is_hydrated_with_deterministic_citations(monkeypatch) -> None:
+    section = ai.SummarySectionDraft(text="Grounded", chunk_ids=["chunk-1", "chunk-1"])
+    output = ai.PaperSummaryDraft(
+        problem_or_hypothesis=section,
+        approach=section,
+        experiments=section,
+        results=section,
+        conclusion=section,
+        limitations_or_notes=section,
+        highlights=[ai.SummaryHighlightDraft(label="Result", explanation="Grounded", chunk_ids=["chunk-1"])],
+    )
+    monkeypatch.setattr(ai, "invoke_structured_json", lambda *args, **kwargs: output)
+    provider = object.__new__(ai.LangChainProvider)
+    provider.chat_model = object()
+    chunks = [
+        {
+            "id": "chunk-1",
+            "page_start": 3,
+            "page_end": 3,
+            "text": "Retrieval improves grounded factual answers under the reported benchmark.",
+        }
+    ]
+
+    result = provider.generate_summary("Grounded Paper", chunks)
+
+    citation = result.section_citations["results"][0]
+    assert citation == {
+        "page": 3,
+        "excerpt": "Retrieval improves grounded factual answers under the reported benchmark.",
+        "chunk_id": "chunk-1",
+    }
+    assert len(result.section_citations["results"]) == 1
+    ai.validate_summary_payload(result, chunks)
+
+
 def test_structured_invocation_repairs_once_after_domain_validation_failure(monkeypatch) -> None:
     outputs = [
         ResearchPlan(search_queries=["invalid"], inclusion_criteria=["Evidence"]),
@@ -182,6 +233,42 @@ def test_ollama_structured_retry_switches_from_schema_to_json_mode(monkeypatch) 
 
     assert result.search_queries == ["valid"]
     assert methods == ["json_schema", "json_mode"]
+
+
+def test_ollama_cloud_uses_prompted_json_for_both_attempts(monkeypatch) -> None:
+    class FakeCloudOllama:
+        model = "gpt-oss:20b-cloud"
+
+    methods = []
+
+    def fake_invoke(*args, structured_method=None, **kwargs):
+        methods.append(structured_method)
+        if len(methods) == 1:
+            raise ValueError("malformed JSON")
+        return ResearchPlan(search_queries=["valid"], inclusion_criteria=["Evidence"])
+
+    monkeypatch.setattr(ai, "ChatOllama", FakeCloudOllama)
+    monkeypatch.setattr(ai, "invoke_structured_once", fake_invoke)
+
+    result = ai.invoke_structured_json(
+        FakeCloudOllama(),
+        ResearchPlan,
+        "Plan",
+        "Question: {question}",
+        {"question": "Q"},
+    )
+
+    assert result.search_queries == ["valid"]
+    assert methods == ["prompted_json", "prompted_json"]
+
+
+def test_prompted_json_parser_accepts_fenced_content() -> None:
+    result = ai.parse_prompted_json(
+        'Explanation before output.\n```json\n{"search_queries":["rag"],"inclusion_criteria":["evidence"]}\n```',
+        ResearchPlan,
+    )
+
+    assert result.search_queries == ["rag"]
 
 
 def test_candidate_selection_rejects_unknown_and_duplicate_ids() -> None:

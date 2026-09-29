@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -394,11 +395,11 @@ class LangChainProvider(AIProvider):
         registry = EvidenceRegistry.from_chunks(chunks[:10])
         output = invoke_structured_json(
             self.chat_model,
-            PaperSummaryOutput,
-            "Summarize the paper using only supplied chunks. Every section and highlight must cite supplied pages/chunks.",
+            PaperSummaryDraft,
+            "Summarize the paper using only supplied chunks. For every section and highlight, select one or more exact supplied chunk IDs as evidence. Do not invent chunk IDs.",
             "Title: {title}\nChunks:\n{context}",
             {"title": paper_title, "context": format_chunks(chunks[:10])},
-            validator=lambda value: validate_summary_evidence(value, registry),
+            validator=lambda value: validate_summary_draft(value, registry),
         )
         section_names = (
             "problem_or_hypothesis",
@@ -408,13 +409,25 @@ class LangChainProvider(AIProvider):
             "conclusion",
             "limitations_or_notes",
         )
+        chunks_by_id = {str(chunk["id"]): chunk for chunk in chunks[:10]}
         return SummaryPayload(
             sections={name: getattr(output, name).text for name in section_names},
             section_citations={
-                name: [citation.model_dump(exclude_none=True) for citation in getattr(output, name).citations]
+                name: [make_citation(chunks_by_id[chunk_id]) for chunk_id in unique_values(getattr(output, name).chunk_ids)]
                 for name in section_names
             },
-            highlights=[highlight.model_dump() for highlight in output.highlights],
+            highlights=[
+                {
+                    "position": position,
+                    "label": highlight.label,
+                    "explanation": highlight.explanation,
+                    "citations": [
+                        make_citation(chunks_by_id[chunk_id])
+                        for chunk_id in unique_values(highlight.chunk_ids)
+                    ],
+                }
+                for position, highlight in enumerate(output.highlights)
+            ],
             generation_mode="ai",
         )
 
@@ -509,6 +522,33 @@ class PaperSummaryOutput(BaseModel):
     conclusion: CitedSummarySection
     limitations_or_notes: CitedSummarySection
     highlights: list[HighlightOutput]
+
+
+class SummarySectionDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1)
+    chunk_ids: list[str] = Field(min_length=1)
+
+
+class SummaryHighlightDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    explanation: str
+    chunk_ids: list[str] = Field(min_length=1)
+
+
+class PaperSummaryDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    problem_or_hypothesis: SummarySectionDraft
+    approach: SummarySectionDraft
+    experiments: SummarySectionDraft
+    results: SummarySectionDraft
+    conclusion: SummarySectionDraft
+    limitations_or_notes: SummarySectionDraft
+    highlights: list[SummaryHighlightDraft]
 
 
 class ChatOutput(BaseModel):
@@ -609,6 +649,26 @@ def validate_summary_evidence(output: PaperSummaryOutput, registry: EvidenceRegi
         validate_citations(getattr(output, section_name).citations, registry)
     for highlight in output.highlights:
         validate_citations(highlight.citations, registry)
+
+
+def validate_summary_draft(output: PaperSummaryDraft, registry: EvidenceRegistry) -> None:
+    sections = (
+        output.problem_or_hypothesis,
+        output.approach,
+        output.experiments,
+        output.results,
+        output.conclusion,
+        output.limitations_or_notes,
+        *output.highlights,
+    )
+    for section in sections:
+        unknown_ids = sorted(set(section.chunk_ids) - set(registry.records))
+        if unknown_ids:
+            raise EvidenceValidationError(f"Summary selected unknown chunk IDs: {', '.join(unknown_ids)}")
+
+
+def unique_values(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
 
 
 def validate_summary_payload(payload: SummaryPayload, chunks: list[dict[str, Any]]) -> None:
@@ -717,6 +777,39 @@ STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
             }
         ],
     },
+    "PaperSummaryDraft": {
+        "problem_or_hypothesis": {
+            "text": "The paper studies whether retrieval grounding improves factual question answering.",
+            "chunk_ids": ["chunk-1"],
+        },
+        "approach": {
+            "text": "The authors compare a retrieval-augmented system against non-retrieval baselines.",
+            "chunk_ids": ["chunk-2"],
+        },
+        "experiments": {
+            "text": "The paper evaluates models on benchmark question-answering datasets.",
+            "chunk_ids": ["chunk-3"],
+        },
+        "results": {
+            "text": "The retrieval-augmented system improves grounded answer quality in the reported setting.",
+            "chunk_ids": ["chunk-4"],
+        },
+        "conclusion": {
+            "text": "Retrieval can improve factuality when retrieved passages are relevant.",
+            "chunk_ids": ["chunk-5"],
+        },
+        "limitations_or_notes": {
+            "text": "The supplied evidence is limited to the provided chunks.",
+            "chunk_ids": ["chunk-6"],
+        },
+        "highlights": [
+            {
+                "label": "Main result",
+                "explanation": "The strongest result is the improvement from retrieval grounding.",
+                "chunk_ids": ["chunk-4"],
+            }
+        ],
+    },
     "ResearchBrief": {
         "executive_summary": "The collection suggests retrieval grounding is useful, but evaluation quality varies.",
         "key_findings": [
@@ -808,7 +901,11 @@ def invoke_structured_json(
         try:
             structured_method = None
             if ChatOllama is not None and isinstance(chat_model, ChatOllama):
-                structured_method = "json_schema" if attempt == 1 else "json_mode"
+                model_name = str(getattr(chat_model, "model", ""))
+                if model_name.endswith("-cloud"):
+                    structured_method = "prompted_json"
+                else:
+                    structured_method = "json_schema" if attempt == 1 else "json_mode"
             result = invoke_structured_once(
                 chat_model,
                 output_model,
@@ -842,9 +939,34 @@ def invoke_structured_once(
     structured_method: str | None = None,
 ) -> StructuredModel:
     prompt = ChatPromptTemplate.from_messages([("system", escape_template_text(system_prompt)), ("human", human_template)])
+    if structured_method == "prompted_json":
+        response = (prompt | chat_model).invoke(payload)
+        return parse_prompted_json(response.content, output_model)
     structured_options = {"method": structured_method} if structured_method else {}
     chain = prompt | chat_model.with_structured_output(output_model, **structured_options)
     return chain.invoke(payload)
+
+
+def parse_prompted_json(content: Any, output_model: type[StructuredModel]) -> StructuredModel:
+    if isinstance(content, str):
+        text = content.strip()
+    elif isinstance(content, list):
+        text = "".join(
+            str(block.get("text", "")) if isinstance(block, dict) else str(block)
+            for block in content
+        ).strip()
+    else:
+        text = str(content).strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1)
+    else:
+        object_start = text.find("{")
+        object_end = text.rfind("}")
+        if object_start < 0 or object_end < object_start:
+            raise ValueError("Model response did not contain a JSON object")
+        text = text[object_start : object_end + 1]
+    return output_model.model_validate_json(text)
 
 
 def escape_template_text(value: str) -> str:
