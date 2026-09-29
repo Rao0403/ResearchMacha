@@ -157,6 +157,33 @@ def test_structured_invocation_stops_after_two_invalid_attempts(monkeypatch) -> 
     assert len(calls) == 2
 
 
+def test_ollama_structured_retry_switches_from_schema_to_json_mode(monkeypatch) -> None:
+    class FakeOllama:
+        pass
+
+    methods = []
+
+    def fake_invoke(*args, structured_method=None, **kwargs):
+        methods.append(structured_method)
+        if len(methods) == 1:
+            raise ValueError("schema response was null")
+        return ResearchPlan(search_queries=["valid"], inclusion_criteria=["Evidence"])
+
+    monkeypatch.setattr(ai, "ChatOllama", FakeOllama)
+    monkeypatch.setattr(ai, "invoke_structured_once", fake_invoke)
+
+    result = ai.invoke_structured_json(
+        FakeOllama(),
+        ResearchPlan,
+        "Plan",
+        "Question: {question}",
+        {"question": "Q"},
+    )
+
+    assert result.search_queries == ["valid"]
+    assert methods == ["json_schema", "json_mode"]
+
+
 def test_candidate_selection_rejects_unknown_and_duplicate_ids() -> None:
     with pytest.raises(EvidenceValidationError, match="invented IDs"):
         validate_candidate_selection(

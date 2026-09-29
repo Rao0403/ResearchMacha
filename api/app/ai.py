@@ -806,7 +806,17 @@ def invoke_structured_json(
     first_error: Exception | None = None
     for attempt, attempt_prompt in enumerate((system_prompt, retry_system_prompt), start=1):
         try:
-            result = invoke_structured_once(chat_model, output_model, attempt_prompt, human_template, payload)
+            structured_method = None
+            if ChatOllama is not None and isinstance(chat_model, ChatOllama):
+                structured_method = "json_schema" if attempt == 1 else "json_mode"
+            result = invoke_structured_once(
+                chat_model,
+                output_model,
+                attempt_prompt,
+                human_template,
+                payload,
+                structured_method=structured_method,
+            )
             if validator is not None:
                 validator(result)
             return result
@@ -828,9 +838,12 @@ def invoke_structured_once(
     system_prompt: str,
     human_template: str,
     payload: dict[str, Any],
+    *,
+    structured_method: str | None = None,
 ) -> StructuredModel:
     prompt = ChatPromptTemplate.from_messages([("system", escape_template_text(system_prompt)), ("human", human_template)])
-    chain = prompt | chat_model.with_structured_output(output_model)
+    structured_options = {"method": structured_method} if structured_method else {}
+    chain = prompt | chat_model.with_structured_output(output_model, **structured_options)
     return chain.invoke(payload)
 
 
@@ -841,7 +854,7 @@ def escape_template_text(value: str) -> str:
 def build_chat_model() -> Any:
     if settings.ai_provider == "openai":
         return ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key)
-    return ChatOllama(model=settings.ollama_chat_model, base_url=settings.ollama_base_url, temperature=0, format="json")
+    return ChatOllama(model=settings.ollama_chat_model, base_url=settings.ollama_base_url, temperature=0)
 
 
 def build_embedding_model() -> Any:

@@ -77,13 +77,14 @@ export function ReaderPage() {
         if (signal.aborted || activePaperIdRef.current !== nextStatus.id) {
           return;
         }
-        setPaper((current) => current?.id === nextStatus.id ? { ...current, ...nextStatus } : current);
         if (["ready", "degraded"].includes(nextStatus.status)) {
           const terminalKey = `${nextStatus.id}:${nextStatus.analysis_generation}:${nextStatus.status}`;
           if (terminalLoadKeyRef.current !== terminalKey) {
             terminalLoadKeyRef.current = terminalKey;
             await refreshCompletedPaper(nextStatus.id, signal, requestRevisionRef.current);
           }
+        } else {
+          setPaper((current) => current?.id === nextStatus.id ? { ...current, ...nextStatus } : current);
         }
       } catch (error) {
         if (!isAbortError(error) && activePaperIdRef.current === paper.id) {
@@ -149,8 +150,13 @@ export function ReaderPage() {
       if (!isCurrentPaperRequest(paperId, signal, revision)) {
         return;
       }
+      const payload = await getPaperSummary(paperId, signal);
+      if (!isCurrentPaperRequest(paperId, signal, revision)) {
+        return;
+      }
       setPaper(nextPaper);
-      await loadSummary(paperId, signal, revision);
+      setSummaryPayload(payload);
+      setMessage(null);
     } catch (error) {
       if (!isAbortError(error) && isCurrentPaperRequest(paperId, signal, revision)) {
         terminalLoadKeyRef.current = null;

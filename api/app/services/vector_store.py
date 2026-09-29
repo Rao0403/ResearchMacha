@@ -133,7 +133,7 @@ class QdrantVectorStore:
         self.collection = settings.qdrant_collection
         self.memory_collection = settings.qdrant_memory_collection
         self.vector_size = settings.qdrant_vector_size
-        self.client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
+        self.client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
 
     def upsert_chunks(self, chunks: list[PaperChunk]) -> None:
         fingerprints = {chunk.embedding_fingerprint for chunk in chunks if chunk.embedding and chunk.embedding_fingerprint}

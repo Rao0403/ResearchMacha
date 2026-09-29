@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../lib/api";
 import type { PaperDetail, PaperSummaryResponse } from "../types";
@@ -59,6 +59,7 @@ function deferred<T>() {
 
 describe("ReaderPage request scoping", () => {
   beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.useRealTimers());
 
   it("clears old paper state and ignores a late summary after a route switch", async () => {
     const oldPaper = paper("old", "Old paper");
@@ -102,5 +103,47 @@ describe("ReaderPage request scoping", () => {
 
     await screen.findByRole("heading", { name: "Strict paper" });
     await waitFor(() => expect(api.getPaperSummary).toHaveBeenCalledTimes(1));
+  });
+
+  it("loads the summary before stopping polling on a degraded terminal transition", async () => {
+    vi.useFakeTimers();
+    const queuedPaper = { ...paper("paper-1", "Fallback paper"), status: "processing" };
+    const degradedPaper = {
+      ...paper("paper-1", "Fallback paper"),
+      status: "degraded",
+      analysis_mode: "extractive" as const,
+      analysis_warning: "AI summary unavailable; source-extractive fallback used.",
+    };
+    vi.mocked(api.getPaper)
+      .mockResolvedValueOnce(queuedPaper)
+      .mockResolvedValueOnce(degradedPaper);
+    vi.mocked(api.getPaperStatus).mockResolvedValue({
+      id: "paper-1",
+      status: "degraded",
+      analysis_generation: 1,
+      analysis_mode: "extractive",
+      analysis_warning: degradedPaper.analysis_warning,
+      active_job: null,
+    });
+    vi.mocked(api.getPaperSummary).mockResolvedValue(summary("Extractive evidence", degradedPaper));
+    const router = createMemoryRouter(
+      [{ path: "/reader/:paperId", element: <ReaderPage /> }],
+      { initialEntries: ["/reader/paper-1"] },
+    );
+
+    render(<RouterProvider router={router} />);
+    await act(async () => undefined);
+    expect(screen.getAllByText("processing")).not.toHaveLength(0);
+
+    await act(async () => vi.advanceTimersByTimeAsync(3500));
+
+    expect(api.getPaperStatus).toHaveBeenCalledTimes(1);
+    expect(api.getPaper).toHaveBeenCalledTimes(2);
+    expect(api.getPaperSummary).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText("Extractive evidence")).not.toHaveLength(0);
+    expect(screen.getAllByText("degraded")).not.toHaveLength(0);
+
+    await act(async () => vi.advanceTimersByTimeAsync(7000));
+    expect(api.getPaperStatus).toHaveBeenCalledTimes(1);
   });
 });
