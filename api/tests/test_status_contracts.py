@@ -87,6 +87,7 @@ def test_paper_status_is_lightweight_and_gets_are_read_only(
     summary_response = api_client.get(f"/api/papers/{paper_id}/summary")
     file_response = api_client.get(f"/api/papers/{paper_id}/file")
     project_response = api_client.get(f"/api/research-workflows/{project_id}")
+    project_status_response = api_client.get(f"/api/research-workflows/{project_id}/status")
 
     assert status_response.status_code == 200
     status_payload = status_response.json()
@@ -114,6 +115,12 @@ def test_paper_status_is_lightweight_and_gets_are_read_only(
     project_payload = project_response.json()
     assert {job["id"] for job in project_payload["recent_jobs"]} == {failed_job.id, active_job.id}
     assert project_payload["blocking_items"][0]["job_id"] == failed_job.id
+    assert project_status_response.status_code == 200
+    assert set(project_status_response.json()) == {"id", "status", "synthesis_generation", "updated_at"}
+    assert project_status_response.json()["id"] == project_id
+    assert "candidates" not in project_status_response.text
+    assert "papers" not in project_status_response.text
+    assert "recent_jobs" not in project_status_response.text
     db_session.expire_all()
     assert db_session.get(Paper, paper_id).last_opened_at == opened_at
 
@@ -123,4 +130,4 @@ def test_status_warning_generation_and_blocker_schemas_are_public(api_client: Te
 
     assert response.status_code == 200
     schemas = response.json()["components"]["schemas"]
-    assert {"PaperStatusRead", "BlockingItemRead", "WarningRead", "GenerationMode"} <= set(schemas)
+    assert {"PaperStatusRead", "ResearchProjectStatusRead", "BlockingItemRead", "WarningRead", "GenerationMode"} <= set(schemas)

@@ -1,7 +1,8 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { analyzePaper, batchUploadPapers, createBatchSummary, getPaper, getPaperStatus } from "../lib/api";
+import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
+import { analyzePaper, batchUploadPapers, createBatchSummary, getPaperStatus } from "../lib/api";
 import type { BatchSummaryResponse, LibraryPaper } from "../types";
 
 export function BatchSummaryPage() {
@@ -12,35 +13,78 @@ export function BatchSummaryPage() {
   const [summarizing, setSummarizing] = useState(false);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
+  const papersRef = useRef(papers);
+  const batchRevisionRef = useRef(0);
+  const uploadControllerRef = useRef<AbortController | null>(null);
+  const summaryControllerRef = useRef<AbortController | null>(null);
+  const retryControllersRef = useRef(new Map<string, AbortController>());
+  const summaryStartedKeyRef = useRef<string | null>(null);
+  papersRef.current = papers;
+
+  const batchIdentity = getBatchIdentity(papers);
+  const hasRunningPapers = papers.some((paper) => !["ready", "degraded", "failed"].includes(paper.status));
+  const allPapersReady = papers.length > 0 && papers.every((paper) => ["ready", "degraded"].includes(paper.status));
 
   useEffect(() => {
-    if (!papers.length) {
-      return;
-    }
+    return () => {
+      batchRevisionRef.current += 1;
+      uploadControllerRef.current?.abort();
+      summaryControllerRef.current?.abort();
+      retryControllersRef.current.forEach((controller) => controller.abort());
+      retryControllersRef.current.clear();
+    };
+  }, []);
 
-    const hasRunningPapers = papers.some((paper) => !["ready", "degraded", "failed"].includes(paper.status));
-    if (!hasRunningPapers) {
-      if (papers.every((paper) => ["ready", "degraded"].includes(paper.status)) && !summary && !summarizing) {
-        void runBatchSummary(papers);
-      }
-      return;
-    }
-
-    const interval = window.setInterval(async () => {
+  useSingleFlightPolling({
+    enabled: hasRunningPapers,
+    identity: batchIdentity,
+    intervalMs: 3500,
+    poll: async (signal) => {
+      const expectedIdentity = batchIdentity;
+      const currentPapers = papersRef.current;
       try {
-        const statuses = await Promise.all(papers.map((paper) => getPaperStatus(paper.id)));
+        const statuses = await Promise.all(currentPapers.map((paper) => getPaperStatus(paper.id, signal)));
+        if (signal.aborted || getBatchIdentity(papersRef.current) !== expectedIdentity) {
+          return;
+        }
         const statusesById = new Map(statuses.map((status) => [status.id, status]));
         setPapers((current) => current.map((paper) => {
           const status = statusesById.get(paper.id);
           return status ? { ...paper, ...status } : paper;
         }));
       } catch (error) {
-        setMessage(getErrorMessage(error));
+        if (!isAbortError(error) && getBatchIdentity(papersRef.current) === expectedIdentity) {
+          setMessage(getErrorMessage(error));
+        }
       }
-    }, 3500);
+    },
+  });
 
-    return () => window.clearInterval(interval);
-  }, [papers, summary, summarizing]);
+  useEffect(() => {
+    if (!allPapersReady || summary) {
+      return;
+    }
+    const summaryKey = `${batchIdentity}:${goal}`;
+    if (summaryStartedKeyRef.current === summaryKey) {
+      return;
+    }
+    const revision = batchRevisionRef.current;
+    const currentPapers = [...papers];
+    let controller: AbortController | null = null;
+    const timeoutId = window.setTimeout(() => {
+      if (getBatchIdentity(papersRef.current) !== batchIdentity) {
+        return;
+      }
+      summaryStartedKeyRef.current = summaryKey;
+      controller = new AbortController();
+      summaryControllerRef.current = controller;
+      void runBatchSummary(currentPapers, controller, revision);
+    }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller?.abort();
+    };
+  }, [allPapersReady, batchIdentity, goal, summary]);
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -54,29 +98,61 @@ export function BatchSummaryPage() {
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
 
+    batchRevisionRef.current += 1;
+    uploadControllerRef.current?.abort();
+    summaryControllerRef.current?.abort();
+    retryControllersRef.current.forEach((controller) => controller.abort());
+    retryControllersRef.current.clear();
+    const revision = batchRevisionRef.current;
+    const controller = new AbortController();
+    uploadControllerRef.current = controller;
+    summaryStartedKeyRef.current = null;
     setUploading(true);
     setMessage(null);
     setSummary(null);
+    setPapers([]);
+    setRetryingIds(new Set());
     try {
-      const response = await batchUploadPapers(formData);
+      const response = await batchUploadPapers(formData, controller.signal);
+      if (controller.signal.aborted || batchRevisionRef.current !== revision) {
+        return;
+      }
       setPapers(response.items.map((item) => item.paper));
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error) && batchRevisionRef.current === revision) {
+        setMessage(getErrorMessage(error));
+      }
     } finally {
-      setUploading(false);
+      if (uploadControllerRef.current === controller) {
+        uploadControllerRef.current = null;
+        setUploading(false);
+      }
     }
   }
 
-  async function runBatchSummary(currentPapers: LibraryPaper[]) {
+  async function runBatchSummary(
+    currentPapers: LibraryPaper[],
+    controller: AbortController,
+    revision: number,
+  ) {
     setSummarizing(true);
     setMessage(null);
     try {
-      const nextSummary = await createBatchSummary(currentPapers.map((paper) => paper.id), goal);
+      const nextSummary = await createBatchSummary(currentPapers.map((paper) => paper.id), goal, controller.signal);
+      if (controller.signal.aborted || batchRevisionRef.current !== revision) {
+        return;
+      }
       setSummary(nextSummary);
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error) && batchRevisionRef.current === revision) {
+        summaryStartedKeyRef.current = null;
+        setMessage(getErrorMessage(error));
+      }
     } finally {
-      setSummarizing(false);
+      if (summaryControllerRef.current === controller) {
+        summaryControllerRef.current = null;
+        setSummarizing(false);
+      }
     }
   }
 
@@ -84,18 +160,31 @@ export function BatchSummaryPage() {
     setRetryingIds((current) => new Set(current).add(paperId));
     setMessage(null);
     setSummary(null);
+    summaryStartedKeyRef.current = null;
+    retryControllersRef.current.get(paperId)?.abort();
+    const controller = new AbortController();
+    retryControllersRef.current.set(paperId, controller);
+    const revision = batchRevisionRef.current;
     try {
-      await analyzePaper(paperId);
-      const updated = await getPaper(paperId);
-      setPapers((current) => current.map((paper) => (paper.id === paperId ? updated : paper)));
+      await analyzePaper(paperId, controller.signal);
+      const status = await getPaperStatus(paperId, controller.signal);
+      if (controller.signal.aborted || batchRevisionRef.current !== revision) {
+        return;
+      }
+      setPapers((current) => current.map((paper) => (paper.id === paperId ? { ...paper, ...status } : paper)));
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error) && batchRevisionRef.current === revision) {
+        setMessage(getErrorMessage(error));
+      }
     } finally {
-      setRetryingIds((current) => {
-        const next = new Set(current);
-        next.delete(paperId);
-        return next;
-      });
+      if (retryControllersRef.current.get(paperId) === controller) {
+        retryControllersRef.current.delete(paperId);
+        setRetryingIds((current) => {
+          const next = new Set(current);
+          next.delete(paperId);
+          return next;
+        });
+      }
     }
   }
 
@@ -267,4 +356,12 @@ function BatchStats({ papers }: { papers: LibraryPaper[] }) {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function getBatchIdentity(papers: LibraryPaper[]) {
+  return papers.map((paper) => paper.id).join(":");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }

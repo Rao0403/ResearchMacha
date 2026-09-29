@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { PdfViewer } from "../components/PdfViewer";
+import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
 import type { ChatMessage, Highlight, PaperDetail, PaperSummary, PaperSummaryResponse } from "../types";
 
@@ -39,59 +40,143 @@ export function ReaderPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [targetPage, setTargetPage] = useState<number | null>(null);
   const pdfSectionRef = useRef<HTMLElement | null>(null);
+  const activePaperIdRef = useRef<string | null>(null);
+  const requestRevisionRef = useRef(0);
+  const loadControllerRef = useRef<AbortController | null>(null);
+  const chatControllerRef = useRef<AbortController | null>(null);
+  const mutationControllerRef = useRef<AbortController | null>(null);
+  const terminalLoadKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (routePaperId) {
       setPaperIdInput(routePaperId);
-      void loadPaper(routePaperId);
+      openPaper(routePaperId);
     }
   }, [routePaperId]);
 
   useEffect(() => {
-    if (!paper || ["ready", "degraded", "failed"].includes(paper.status)) {
-      return;
-    }
+    return () => {
+      requestRevisionRef.current += 1;
+      loadControllerRef.current?.abort();
+      chatControllerRef.current?.abort();
+      mutationControllerRef.current?.abort();
+    };
+  }, []);
 
-    const interval = window.setInterval(async () => {
+  const pollingEnabled = Boolean(paper && !["ready", "degraded", "failed"].includes(paper.status));
+  useSingleFlightPolling({
+    enabled: pollingEnabled,
+    identity: paper?.id ?? "no-paper",
+    intervalMs: 3500,
+    poll: async (signal) => {
+      if (!paper || activePaperIdRef.current !== paper.id) {
+        return;
+      }
       try {
-        const nextStatus = await getPaperStatus(paper.id);
-        setPaper((current) => current && current.id === nextStatus.id ? { ...current, ...nextStatus } : current);
+        const nextStatus = await getPaperStatus(paper.id, signal);
+        if (signal.aborted || activePaperIdRef.current !== nextStatus.id) {
+          return;
+        }
+        setPaper((current) => current?.id === nextStatus.id ? { ...current, ...nextStatus } : current);
         if (["ready", "degraded"].includes(nextStatus.status)) {
-          await loadPaper(nextStatus.id, true);
+          const terminalKey = `${nextStatus.id}:${nextStatus.analysis_generation}:${nextStatus.status}`;
+          if (terminalLoadKeyRef.current !== terminalKey) {
+            terminalLoadKeyRef.current = terminalKey;
+            await refreshCompletedPaper(nextStatus.id, signal, requestRevisionRef.current);
+          }
         }
       } catch (error) {
-        setMessage(getErrorMessage(error));
+        if (!isAbortError(error) && activePaperIdRef.current === paper.id) {
+          setMessage(getErrorMessage(error));
+        }
       }
-    }, 3500);
+    },
+  });
 
-    return () => window.clearInterval(interval);
-  }, [paper]);
-
-  async function loadPaper(paperId: string, quiet = false) {
-    try {
-      const nextPaper = await getPaper(paperId);
-      setPaper(nextPaper);
+  function openPaper(paperId: string) {
+    const normalizedId = paperId.trim();
+    if (!normalizedId) {
+      return;
+    }
+    const identityChanged = activePaperIdRef.current !== normalizedId;
+    requestRevisionRef.current += 1;
+    const revision = requestRevisionRef.current;
+    activePaperIdRef.current = normalizedId;
+    terminalLoadKeyRef.current = null;
+    loadControllerRef.current?.abort();
+    chatControllerRef.current?.abort();
+    mutationControllerRef.current?.abort();
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
+    if (identityChanged) {
+      setPaper(null);
+      setSummaryPayload(null);
+      setMessages([]);
+      setSessionId(undefined);
+      setQuestion("");
       setCurrentPage(1);
       setTargetPage(null);
+    }
+    setMessage(null);
+    setSending(false);
+    void loadPaper(normalizedId, controller.signal, revision);
+  }
+
+  async function loadPaper(paperId: string, signal: AbortSignal, revision: number) {
+    try {
+      const nextPaper = await getPaper(paperId, signal);
+      if (!isCurrentPaperRequest(paperId, signal, revision)) {
+        return;
+      }
+      setPaper(nextPaper);
       if (["ready", "degraded"].includes(nextPaper.status)) {
-        await loadSummary(nextPaper.id);
-      } else if (!quiet) {
+        const terminalKey = `${nextPaper.id}:${nextPaper.analysis_generation}:${nextPaper.status}`;
+        terminalLoadKeyRef.current = terminalKey;
+        await loadSummary(nextPaper.id, signal, revision);
+      } else {
         setMessage("Analysis is queued or running. Notes will appear when ready.");
       }
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error) && isCurrentPaperRequest(paperId, signal, revision)) {
+        setMessage(getErrorMessage(error));
+      }
     }
   }
 
-  async function loadSummary(paperId: string) {
+  async function refreshCompletedPaper(paperId: string, signal: AbortSignal, revision: number) {
     try {
-      const payload = await getPaperSummary(paperId);
+      const nextPaper = await getPaper(paperId, signal);
+      if (!isCurrentPaperRequest(paperId, signal, revision)) {
+        return;
+      }
+      setPaper(nextPaper);
+      await loadSummary(paperId, signal, revision);
+    } catch (error) {
+      if (!isAbortError(error) && isCurrentPaperRequest(paperId, signal, revision)) {
+        terminalLoadKeyRef.current = null;
+        setMessage(getErrorMessage(error));
+      }
+    }
+  }
+
+  async function loadSummary(paperId: string, signal: AbortSignal, revision: number) {
+    try {
+      const payload = await getPaperSummary(paperId, signal);
+      if (!isCurrentPaperRequest(paperId, signal, revision)) {
+        return;
+      }
       setSummaryPayload(payload);
       setMessage(null);
-    } catch {
-      setSummaryPayload(null);
-      setMessage("Analysis is still running. Notes will appear when ready.");
+    } catch (error) {
+      if (!isAbortError(error) && isCurrentPaperRequest(paperId, signal, revision)) {
+        setSummaryPayload(null);
+        setMessage("Analysis is still running. Notes will appear when ready.");
+      }
     }
+  }
+
+  function isCurrentPaperRequest(paperId: string, signal: AbortSignal, revision: number) {
+    return !signal.aborted && activePaperIdRef.current === paperId && requestRevisionRef.current === revision;
   }
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
@@ -108,16 +193,27 @@ export function ReaderPage() {
     formData.append("file", file);
     formData.append("title", file.name.replace(/\.pdf$/i, ""));
 
+    mutationControllerRef.current?.abort();
+    const controller = new AbortController();
+    mutationControllerRef.current = controller;
     setUploading(true);
     setMessage(null);
     try {
-      const response = await uploadPaper(formData);
+      const response = await uploadPaper(formData, controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
       setPaperIdInput(response.paper.id);
-      await loadPaper(response.paper.id);
+      openPaper(response.paper.id);
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error)) {
+        setMessage(getErrorMessage(error));
+      }
     } finally {
-      setUploading(false);
+      if (mutationControllerRef.current === controller) {
+        mutationControllerRef.current = null;
+        setUploading(false);
+      }
     }
   }
 
@@ -126,7 +222,7 @@ export function ReaderPage() {
     if (!paperIdInput.trim()) {
       return;
     }
-    await loadPaper(paperIdInput.trim());
+    openPaper(paperIdInput);
   }
 
   async function handleChat(event: FormEvent) {
@@ -136,6 +232,11 @@ export function ReaderPage() {
     }
 
     const pendingQuestion = question.trim();
+    const paperId = paper.id;
+    const revision = requestRevisionRef.current;
+    chatControllerRef.current?.abort();
+    const controller = new AbortController();
+    chatControllerRef.current = controller;
     setQuestion("");
     setSending(true);
     setMessages((current) => [
@@ -150,13 +251,21 @@ export function ReaderPage() {
     ]);
 
     try {
-      const response = await sendChatMessage(paper.id, pendingQuestion, sessionId);
+      const response = await sendChatMessage(paperId, pendingQuestion, sessionId, controller.signal);
+      if (!isCurrentPaperRequest(paperId, controller.signal, revision)) {
+        return;
+      }
       setSessionId(response.session_id);
       setMessages((current) => [...current, response.answer]);
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error) && isCurrentPaperRequest(paperId, controller.signal, revision)) {
+        setMessage(getErrorMessage(error));
+      }
     } finally {
-      setSending(false);
+      if (chatControllerRef.current === controller) {
+        chatControllerRef.current = null;
+        setSending(false);
+      }
     }
   }
 
@@ -164,16 +273,29 @@ export function ReaderPage() {
     if (!paper) {
       return;
     }
+    const paperId = paper.id;
+    const revision = requestRevisionRef.current;
+    mutationControllerRef.current?.abort();
+    const controller = new AbortController();
+    mutationControllerRef.current = controller;
     setRetrying(true);
     setMessage(null);
     try {
-      await analyzePaper(paper.id);
-      await loadPaper(paper.id);
+      await analyzePaper(paperId, controller.signal);
+      if (!isCurrentPaperRequest(paperId, controller.signal, revision)) {
+        return;
+      }
+      setPaper((current) => current?.id === paperId ? { ...current, status: "processing" } : current);
       setMessage("Analysis was requeued. Notes will refresh when ready.");
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error) && activePaperIdRef.current === paperId) {
+        setMessage(getErrorMessage(error));
+      }
     } finally {
-      setRetrying(false);
+      if (mutationControllerRef.current === controller) {
+        mutationControllerRef.current = null;
+        setRetrying(false);
+      }
     }
   }
 
@@ -396,4 +518,8 @@ function CitationButton({ citation, onClick }: { citation: { page: number; excer
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }

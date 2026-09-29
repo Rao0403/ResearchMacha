@@ -81,6 +81,15 @@ class BlockingItemRead(BaseModel):
     error: str | None
 
 
+class ResearchProjectStatusRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    status: str
+    synthesis_generation: int
+    updated_at: datetime
+
+
 class ResearchProjectRead(BaseModel):
     id: str
     question: str

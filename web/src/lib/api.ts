@@ -10,6 +10,7 @@ import type {
   PaperSummaryResponse,
   ResearchBrief,
   ResearchProject,
+  ResearchProjectStatus,
   UploadPaperResponse,
 } from "../types";
 
@@ -172,6 +173,10 @@ export async function approveResearchWorkflow(projectId: string, candidateIds: s
 
 export async function getResearchWorkflow(projectId: string, signal?: AbortSignal): Promise<ResearchProject> {
   return request<ResearchProject>(`/research-workflows/${projectId}`, { signal });
+}
+
+export async function getResearchWorkflowStatus(projectId: string, signal?: AbortSignal): Promise<ResearchProjectStatus> {
+  return request<ResearchProjectStatus>(`/research-workflows/${projectId}/status`, { signal });
 }
 
 export async function createDemoProject(signal?: AbortSignal): Promise<ResearchProject> {

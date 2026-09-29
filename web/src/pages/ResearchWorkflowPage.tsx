@@ -1,7 +1,8 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { approveResearchWorkflow, createResearchWorkflow, getResearchWorkflow } from "../lib/api";
+import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
+import { approveResearchWorkflow, createResearchWorkflow, getResearchWorkflow, getResearchWorkflowStatus } from "../lib/api";
 import type { AgentRun, AgentStep, ResearchBrief, ResearchCandidate, ResearchFinding, ResearchMemory, ResearchProject } from "../types";
 
 const workflowSteps = ["Planning", "Finding papers", "Awaiting approval", "Analyzing", "Synthesizing", "Done"];
@@ -21,23 +22,51 @@ export function ResearchWorkflowPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
+  const projectRef = useRef(project);
+  const projectRevisionRef = useRef(0);
+  const actionControllerRef = useRef<AbortController | null>(null);
+  projectRef.current = project;
 
   useEffect(() => {
-    if (!project || !["importing", "analyzing", "synthesizing"].includes(project.status)) {
-      return;
-    }
+    return () => {
+      projectRevisionRef.current += 1;
+      actionControllerRef.current?.abort();
+    };
+  }, []);
 
-    const interval = window.setInterval(async () => {
-      try {
-        const nextProject = await getResearchWorkflow(project.id);
-        setProject(nextProject);
-      } catch (error) {
-        setMessage(getErrorMessage(error));
+  const pollingEnabled = Boolean(project && ["importing", "analyzing", "synthesis_queued", "synthesizing"].includes(project.status));
+  useSingleFlightPolling({
+    enabled: pollingEnabled,
+    identity: project?.id ?? "no-project",
+    intervalMs: 4000,
+    poll: async (signal) => {
+      if (!project || projectRef.current?.id !== project.id) {
+        return;
       }
-    }, 4000);
-
-    return () => window.clearInterval(interval);
-  }, [project]);
+      try {
+        const status = await getResearchWorkflowStatus(project.id, signal);
+        const current = projectRef.current;
+        if (signal.aborted || current?.id !== status.id) {
+          return;
+        }
+        const changed = status.status !== current.status
+          || status.synthesis_generation !== current.synthesis_generation
+          || status.updated_at !== current.updated_at;
+        if (!changed) {
+          return;
+        }
+        const nextProject = await getResearchWorkflow(project.id, signal);
+        if (!signal.aborted && projectRef.current?.id === nextProject.id) {
+          projectRef.current = nextProject;
+          setProject(nextProject);
+        }
+      } catch (error) {
+        if (!isAbortError(error) && projectRef.current?.id === project.id) {
+          setMessage(getErrorMessage(error));
+        }
+      }
+    },
+  });
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -45,18 +74,33 @@ export function ResearchWorkflowPage() {
       return;
     }
 
+    projectRevisionRef.current += 1;
+    const revision = projectRevisionRef.current;
+    actionControllerRef.current?.abort();
+    const controller = new AbortController();
+    actionControllerRef.current = controller;
     setSubmitting(true);
     setMessage(null);
+    projectRef.current = null;
     setProject(null);
     setSelected(new Set());
     try {
-      const nextProject = await createResearchWorkflow(question.trim());
+      const nextProject = await createResearchWorkflow(question.trim(), controller.signal);
+      if (controller.signal.aborted || projectRevisionRef.current !== revision) {
+        return;
+      }
+      projectRef.current = nextProject;
       setProject(nextProject);
       setSelected(new Set(nextProject.candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.id)));
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error) && projectRevisionRef.current === revision) {
+        setMessage(getErrorMessage(error));
+      }
     } finally {
-      setSubmitting(false);
+      if (actionControllerRef.current === controller) {
+        actionControllerRef.current = null;
+        setSubmitting(false);
+      }
     }
   }
 
@@ -65,15 +109,29 @@ export function ResearchWorkflowPage() {
       return;
     }
 
+    const projectId = project.id;
+    const revision = projectRevisionRef.current;
+    actionControllerRef.current?.abort();
+    const controller = new AbortController();
+    actionControllerRef.current = controller;
     setApproving(true);
     setMessage(null);
     try {
-      const nextProject = await approveResearchWorkflow(project.id, Array.from(selected));
+      const nextProject = await approveResearchWorkflow(projectId, Array.from(selected), controller.signal);
+      if (controller.signal.aborted || projectRevisionRef.current !== revision || projectRef.current?.id !== projectId) {
+        return;
+      }
+      projectRef.current = nextProject;
       setProject(nextProject);
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (!isAbortError(error) && projectRevisionRef.current === revision && projectRef.current?.id === projectId) {
+        setMessage(getErrorMessage(error));
+      }
     } finally {
-      setApproving(false);
+      if (actionControllerRef.current === controller) {
+        actionControllerRef.current = null;
+        setApproving(false);
+      }
     }
   }
 
@@ -508,4 +566,8 @@ function ResearchBriefView({ brief }: { brief: ResearchBrief }) {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }

@@ -248,6 +248,13 @@ export interface ResearchProject {
   blocking_items: BlockingItem[];
 }
 
+export interface ResearchProjectStatus {
+  id: string;
+  status: string;
+  synthesis_generation: number;
+  updated_at: string;
+}
+
 export interface BlockingItem {
   target_type: string;
   target_id: string;

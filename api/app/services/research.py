@@ -84,6 +84,13 @@ def get_project_or_404(db: Session, project_id: str) -> ResearchProject:
     return project
 
 
+def get_project_polling_status_or_404(db: Session, project_id: str) -> ResearchProject:
+    project = db.get(ResearchProject, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Research project not found")
+    return project
+
+
 def serialize_project(project: ResearchProject) -> ResearchProjectRead:
     papers = [LibraryPaperRead.model_validate(link.paper) for link in project.papers if link.paper is not None]
     latest_run = sorted(project.agent_runs, key=lambda run: run.created_at, reverse=True)[0] if project.agent_runs else None

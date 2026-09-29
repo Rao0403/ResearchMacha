@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.schemas.research import CandidateSelectionRequest, ResearchPlanResponse, ResearchProjectCreate, ResearchProjectRead
+from app.schemas.research import (
+    CandidateSelectionRequest,
+    ResearchPlanResponse,
+    ResearchProjectCreate,
+    ResearchProjectRead,
+    ResearchProjectStatusRead,
+)
 from app.services.research import (
     approve_research_workflow,
     create_project,
@@ -14,6 +20,7 @@ from app.services.research import (
     enqueue_synthesis_job,
     exclude_candidate,
     exclude_project_paper,
+    get_project_polling_status_or_404,
     import_selected_candidates,
     list_projects,
     plan_project,
@@ -43,6 +50,11 @@ def approve_workflow(
 @router.get("/research-workflows/{project_id}", response_model=ResearchProjectRead)
 def get_workflow(project_id: str, db: Session = Depends(get_db)) -> ResearchProjectRead:
     return serialize_project(get_workflow_status(db, project_id))
+
+
+@router.get("/research-workflows/{project_id}/status", response_model=ResearchProjectStatusRead)
+def get_workflow_polling_status(project_id: str, db: Session = Depends(get_db)) -> ResearchProjectStatusRead:
+    return ResearchProjectStatusRead.model_validate(get_project_polling_status_or_404(db, project_id))
 
 
 @router.delete("/research-workflows/{project_id}/candidates/{candidate_id}", response_model=ResearchProjectRead)
