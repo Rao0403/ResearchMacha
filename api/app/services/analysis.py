@@ -175,6 +175,7 @@ def process_analysis_job(
         chunk_payload = [
             {
                 "id": chunk.id,
+                "chunk_index": chunk.chunk_index,
                 "page_start": chunk.page_start,
                 "page_end": chunk.page_end,
                 "section_label": chunk.section_label,

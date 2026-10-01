@@ -161,6 +161,111 @@ def test_summary_draft_is_hydrated_with_deterministic_citations(monkeypatch) -> 
     ai.validate_summary_payload(result, chunks)
 
 
+def test_summary_context_uses_all_chunks_when_the_paper_fits_the_budget() -> None:
+    chunks = [
+        {"id": f"chunk-{index}", "chunk_index": index, "page_start": index + 1, "text": "x" * 100}
+        for index in range(10)
+    ]
+
+    selected = ai.select_summary_chunks(chunks)
+
+    assert [chunk["id"] for chunk in selected] == [chunk["id"] for chunk in chunks]
+
+
+def test_summary_context_covers_every_main_body_page_before_adding_extra_chunks() -> None:
+    chunks = [
+        {
+            "id": f"chunk-{page}-{position}",
+            "chunk_index": page * 3 + position,
+            "page_start": page + 1,
+            "text": "x" * 100,
+        }
+        for page in range(9)
+        for position in range(3)
+    ]
+
+    selected = ai.select_summary_chunks(chunks)
+
+    assert len(selected) == 14
+    assert {chunk["page_start"] for chunk in selected} == set(range(1, 10))
+
+
+def test_summary_context_samples_across_oversized_papers() -> None:
+    chunks = [
+        {"id": f"chunk-{index}", "chunk_index": index, "page_start": index + 1, "text": "x" * 200}
+        for index in range(100)
+    ]
+
+    selected = ai.select_summary_chunks(chunks, max_chars=1_000, max_chunks=5)
+
+    assert len(selected) == 5
+    assert selected[0]["id"] == "chunk-0"
+    assert selected[-1]["id"] == "chunk-99"
+
+
+def test_summary_context_excludes_reference_list_but_keeps_preceding_body_text() -> None:
+    chunks = [
+        {"id": f"chunk-{index}", "chunk_index": index, "page_start": index + 1, "text": f"Body {index}"}
+        for index in range(10)
+    ]
+    chunks[6]["text"] = "Final limitation.\nReferences\nAuthor. 2024. Citation."
+
+    selected = ai.select_summary_chunks(chunks)
+
+    assert [chunk["id"] for chunk in selected] == [f"chunk-{index}" for index in range(7)]
+    assert selected[-1]["text"] == "Final limitation."
+
+
+def test_chat_draft_is_hydrated_with_a_verbatim_citation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ai,
+        "invoke_structured_json",
+        lambda *args, **kwargs: ai.ChatDraft(answer="The reported result improved.", chunk_ids=["chunk-1"]),
+    )
+    provider = object.__new__(ai.LangChainProvider)
+    provider.chat_model = object()
+    chunks = [
+        {
+            "id": "chunk-1",
+            "page_start": 7,
+            "page_end": 7,
+            "text": "The reported result improved over the baseline.",
+        }
+    ]
+
+    result = provider.answer_question("Paper", "What were the results?", chunks, [])
+
+    assert result.answer == "The reported result improved."
+    assert result.citations == [
+        {
+            "page": 7,
+            "excerpt": "The reported result improved over the baseline.",
+            "chunk_id": "chunk-1",
+        }
+    ]
+    ai.validate_citations(result.citations, EvidenceRegistry.from_chunks(chunks))
+
+
+def test_chat_draft_rejects_unknown_chunk_ids() -> None:
+    with pytest.raises(EvidenceValidationError, match="unknown chunk IDs"):
+        ai.validate_chat_draft(
+            ai.ChatDraft(answer="Unsupported", chunk_ids=["invented"]),
+            evidence_registry(),
+        )
+
+
+def test_hydrated_citations_do_not_repeat_the_same_page() -> None:
+    chunks = {
+        "chunk-1": {"id": "chunk-1", "page_start": 3, "text": "First evidence."},
+        "chunk-2": {"id": "chunk-2", "page_start": 3, "text": "Second evidence."},
+        "chunk-3": {"id": "chunk-3", "page_start": 4, "text": "Third evidence."},
+    }
+
+    citations = ai.citations_for_chunk_ids(["chunk-1", "chunk-2", "chunk-3"], chunks)
+
+    assert [citation["page"] for citation in citations] == [3, 4]
+
+
 def test_structured_invocation_repairs_once_after_domain_validation_failure(monkeypatch) -> None:
     outputs = [
         ResearchPlan(search_queries=["invalid"], inclusion_criteria=["Evidence"]),

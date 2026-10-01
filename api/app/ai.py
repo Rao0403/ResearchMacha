@@ -392,13 +392,14 @@ class LangChainProvider(AIProvider):
         )
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
-        registry = EvidenceRegistry.from_chunks(chunks[:10])
+        summary_chunks = select_summary_chunks(chunks)
+        registry = EvidenceRegistry.from_chunks(summary_chunks)
         output = invoke_structured_json(
             self.chat_model,
             PaperSummaryDraft,
-            "Summarize the paper using only supplied chunks. For every section and highlight, select one or more exact supplied chunk IDs as evidence. Do not invent chunk IDs.",
+            "Summarize the paper using only supplied chunks, which are ordered across the paper. Prefer detailed body evidence over abstract-level claims: use methods chunks for approach, evaluation chunks for experiments and results, and discussion or limitation chunks for limitations. For every section and highlight, select one or more exact supplied chunk IDs as evidence. Do not invent chunk IDs.",
             "Title: {title}\nChunks:\n{context}",
-            {"title": paper_title, "context": format_chunks(chunks[:10])},
+            {"title": paper_title, "context": format_chunks(summary_chunks)},
             validator=lambda value: validate_summary_draft(value, registry),
         )
         section_names = (
@@ -409,11 +410,11 @@ class LangChainProvider(AIProvider):
             "conclusion",
             "limitations_or_notes",
         )
-        chunks_by_id = {str(chunk["id"]): chunk for chunk in chunks[:10]}
+        chunks_by_id = {str(chunk["id"]): chunk for chunk in summary_chunks}
         return SummaryPayload(
             sections={name: getattr(output, name).text for name in section_names},
             section_citations={
-                name: [make_citation(chunks_by_id[chunk_id]) for chunk_id in unique_values(getattr(output, name).chunk_ids)]
+                name: citations_for_chunk_ids(getattr(output, name).chunk_ids, chunks_by_id)
                 for name in section_names
             },
             highlights=[
@@ -421,10 +422,7 @@ class LangChainProvider(AIProvider):
                     "position": position,
                     "label": highlight.label,
                     "explanation": highlight.explanation,
-                    "citations": [
-                        make_citation(chunks_by_id[chunk_id])
-                        for chunk_id in unique_values(highlight.chunk_ids)
-                    ],
+                    "citations": citations_for_chunk_ids(highlight.chunk_ids, chunks_by_id),
                 }
                 for position, highlight in enumerate(output.highlights)
             ],
@@ -471,11 +469,10 @@ class LangChainProvider(AIProvider):
         context_chunks: list[dict[str, Any]],
         history: list[dict[str, str]],
     ) -> ChatPayload:
-        registry = EvidenceRegistry.from_chunks(context_chunks)
         output = invoke_structured_json(
             self.chat_model,
-            ChatOutput,
-            "Answer using only the supplied paper chunks. If evidence is weak, say so. Include citations.",
+            ChatDraft,
+            "Answer using only the supplied paper chunks. If evidence is weak, say so. Select exact supplied chunk IDs that support the answer; do not copy or invent citation metadata.",
             "Title: {title}\nQuestion: {question}\nHistory: {history}\nChunks:\n{context}",
             {
                 "title": paper_title,
@@ -483,15 +480,12 @@ class LangChainProvider(AIProvider):
                 "history": history[-6:],
                 "context": format_chunks(context_chunks),
             },
-            validator=lambda value: validate_citations(
-                value.citations,
-                registry,
-                require_at_least_one=False,
-            ),
+            validator=lambda value: validate_chat_draft(value, EvidenceRegistry.from_chunks(context_chunks)),
         )
+        chunks_by_id = {str(chunk["id"]): chunk for chunk in context_chunks}
         return ChatPayload(
             answer=output.answer,
-            citations=[citation.model_dump(exclude_none=True) for citation in output.citations],
+            citations=citations_for_chunk_ids(output.chunk_ids, chunks_by_id),
             generation_mode="ai",
         )
 
@@ -554,6 +548,13 @@ class PaperSummaryDraft(BaseModel):
 class ChatOutput(BaseModel):
     answer: str
     citations: list[EvidenceCitation]
+
+
+class ChatDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str = Field(min_length=1)
+    chunk_ids: list[str] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -667,8 +668,101 @@ def validate_summary_draft(output: PaperSummaryDraft, registry: EvidenceRegistry
             raise EvidenceValidationError(f"Summary selected unknown chunk IDs: {', '.join(unknown_ids)}")
 
 
+def validate_chat_draft(output: ChatDraft, registry: EvidenceRegistry) -> None:
+    unknown_ids = sorted(set(output.chunk_ids) - set(registry.records))
+    if unknown_ids:
+        raise EvidenceValidationError(f"Chat answer selected unknown chunk IDs: {', '.join(unknown_ids)}")
+
+
 def unique_values(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def citations_for_chunk_ids(
+    chunk_ids: list[str],
+    chunks_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, str | int]]:
+    citations: list[dict[str, str | int]] = []
+    cited_pages: set[int] = set()
+    for chunk_id in unique_values(chunk_ids):
+        chunk = chunks_by_id[chunk_id]
+        page = int(chunk["page_start"])
+        if page in cited_pages:
+            continue
+        cited_pages.add(page)
+        citations.append(make_citation(chunk))
+    return citations
+
+
+def select_summary_chunks(
+    chunks: list[dict[str, Any]],
+    *,
+    max_chars: int = 25_000,
+    max_chunks: int = 14,
+) -> list[dict[str, Any]]:
+    if not chunks:
+        return []
+    ordered = trim_reference_section(
+        sorted(chunks, key=lambda chunk: int(chunk.get("chunk_index", 0)))
+    )
+    if len(ordered) <= max_chunks and sum(len(str(chunk.get("text", ""))) for chunk in ordered) <= max_chars:
+        return ordered
+
+    page_groups: list[list[int]] = []
+    for index, chunk in enumerate(ordered):
+        page_number = int(chunk.get("page_start", 0))
+        if not page_groups or int(ordered[page_groups[-1][0]].get("page_start", 0)) != page_number:
+            page_groups.append([])
+        page_groups[-1].append(index)
+
+    if len(page_groups) <= max_chunks:
+        selected_indexes = {group[0] for group in page_groups}
+    else:
+        selected_indexes = {
+            page_groups[index][0]
+            for index in evenly_spaced_indexes(len(page_groups), max_chunks)
+        }
+    remaining_indexes = [index for index in range(len(ordered)) if index not in selected_indexes]
+    extra_count = min(max_chunks - len(selected_indexes), len(remaining_indexes))
+    if extra_count:
+        selected_indexes.update(
+            remaining_indexes[index]
+            for index in evenly_spaced_indexes(len(remaining_indexes), extra_count)
+        )
+
+    selected = [ordered[index] for index in sorted(selected_indexes)]
+    while len(selected) > 1:
+        if sum(len(str(chunk.get("text", ""))) for chunk in selected) <= max_chars:
+            return selected
+        selected = [selected[index] for index in evenly_spaced_indexes(len(selected), len(selected) - 1)]
+    return [ordered[0]]
+
+
+def trim_reference_section(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    body: list[dict[str, Any]] = []
+    minimum_reference_index = max(1, len(chunks) // 5)
+    for index, chunk in enumerate(chunks):
+        text = str(chunk.get("text", ""))
+        match = re.search(r"(?im)^\s*references\s*$", text)
+        if match is None or index < minimum_reference_index:
+            body.append(chunk)
+            continue
+        prefix = text[: match.start()].strip()
+        if prefix:
+            body.append({**chunk, "text": prefix})
+        break
+    return body or chunks
+
+
+def evenly_spaced_indexes(item_count: int, selected_count: int) -> list[int]:
+    if selected_count <= 1:
+        return [0]
+    return list(
+        dict.fromkeys(
+            round(position * (item_count - 1) / (selected_count - 1))
+            for position in range(selected_count)
+        )
+    )
 
 
 def validate_summary_payload(payload: SummaryPayload, chunks: list[dict[str, Any]]) -> None:
@@ -866,6 +960,10 @@ STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
     "ChatOutput": {
         "answer": "The supplied chunks support the claim that retrieval improves answer grounding, but the evidence is limited to the retrieved passages.",
         "citations": [{"page": 4, "excerpt": "Results improve over baselines.", "chunk_id": "chunk-4"}],
+    },
+    "ChatDraft": {
+        "answer": "The supplied chunks support the claim that retrieval improves answer grounding, but the evidence is limited to the retrieved passages.",
+        "chunk_ids": ["chunk-4"],
     },
 }
 
