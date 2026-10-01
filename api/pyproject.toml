@@ -39,3 +39,6 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "mysql: integration tests that require TEST_MYSQL_URL and a disposable MySQL database",
+]
