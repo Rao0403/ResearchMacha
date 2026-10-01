@@ -1,9 +1,29 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { GenerationNotice } from "../components/GenerationNotice";
+import { ResearchCitationLink } from "../components/ResearchCitationLink";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
-import { approveResearchWorkflow, createResearchWorkflow, getResearchWorkflow, getResearchWorkflowStatus } from "../lib/api";
-import type { AgentRun, AgentStep, ResearchBrief, ResearchCandidate, ResearchFinding, ResearchMemory, ResearchProject } from "../types";
+import {
+  approveResearchWorkflow,
+  createResearchWorkflow,
+  excludeResearchWorkflowCandidate,
+  excludeResearchWorkflowPaper,
+  getResearchWorkflow,
+  getResearchWorkflowStatus,
+  retryJob,
+} from "../lib/api";
+import type {
+  AgentRun,
+  AgentStep,
+  BlockingItem,
+  Job,
+  ResearchBrief,
+  ResearchCandidate,
+  ResearchFinding,
+  ResearchMemory,
+  ResearchProject,
+} from "../types";
 
 const workflowSteps = ["Planning", "Finding papers", "Awaiting approval", "Analyzing", "Synthesizing", "Done"];
 
@@ -22,6 +42,7 @@ export function ResearchWorkflowPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [busyItem, setBusyItem] = useState<string | null>(null);
   const projectRef = useRef(project);
   const projectRevisionRef = useRef(0);
   const actionControllerRef = useRef<AbortController | null>(null);
@@ -80,6 +101,7 @@ export function ResearchWorkflowPage() {
     const controller = new AbortController();
     actionControllerRef.current = controller;
     setSubmitting(true);
+    setBusyItem(null);
     setMessage(null);
     projectRef.current = null;
     setProject(null);
@@ -131,6 +153,75 @@ export function ResearchWorkflowPage() {
       if (actionControllerRef.current === controller) {
         actionControllerRef.current = null;
         setApproving(false);
+      }
+    }
+  }
+
+  async function handleRetry(jobId: string) {
+    if (!project) {
+      return;
+    }
+    const projectId = project.id;
+    const revision = projectRevisionRef.current;
+    actionControllerRef.current?.abort();
+    const controller = new AbortController();
+    actionControllerRef.current = controller;
+    setBusyItem(`retry:${jobId}`);
+    setMessage(null);
+    try {
+      await retryJob(jobId, controller.signal);
+      const nextProject = await getResearchWorkflow(projectId, controller.signal);
+      if (controller.signal.aborted || projectRevisionRef.current !== revision || projectRef.current?.id !== projectId) {
+        return;
+      }
+      projectRef.current = nextProject;
+      setProject(nextProject);
+    } catch (error) {
+      if (!isAbortError(error) && projectRevisionRef.current === revision && projectRef.current?.id === projectId) {
+        setMessage(getErrorMessage(error));
+      }
+    } finally {
+      if (actionControllerRef.current === controller) {
+        actionControllerRef.current = null;
+        setBusyItem(null);
+      }
+    }
+  }
+
+  async function handleExclude(blocker: BlockingItem) {
+    if (!project || blocker.target_type === "synthesis") {
+      return;
+    }
+    const projectId = project.id;
+    const revision = projectRevisionRef.current;
+    actionControllerRef.current?.abort();
+    const controller = new AbortController();
+    actionControllerRef.current = controller;
+    const actionKey = `exclude:${blocker.target_type}:${blocker.target_id}`;
+    setBusyItem(actionKey);
+    setMessage(null);
+    try {
+      const nextProject = blocker.target_type === "candidate"
+        ? await excludeResearchWorkflowCandidate(projectId, blocker.target_id, controller.signal)
+        : await excludeResearchWorkflowPaper(projectId, blocker.target_id, controller.signal);
+      if (controller.signal.aborted || projectRevisionRef.current !== revision || projectRef.current?.id !== projectId) {
+        return;
+      }
+      projectRef.current = nextProject;
+      setProject(nextProject);
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(blocker.target_id);
+        return next;
+      });
+    } catch (error) {
+      if (!isAbortError(error) && projectRevisionRef.current === revision && projectRef.current?.id === projectId) {
+        setMessage(getErrorMessage(error));
+      }
+    } finally {
+      if (actionControllerRef.current === controller) {
+        actionControllerRef.current = null;
+        setBusyItem(null);
       }
     }
   }
@@ -190,6 +281,19 @@ export function ResearchWorkflowPage() {
 
       {project?.agent_run ? <AgentTrace run={project.agent_run} /> : null}
       {project?.memory_signals?.length ? <MemorySignals memories={project.memory_signals} /> : null}
+
+      {project?.blocking_items.length ? (
+        <WorkflowBlockers
+          blockers={project.blocking_items}
+          busyItem={busyItem}
+          onExclude={handleExclude}
+          onRetry={handleRetry}
+        />
+      ) : null}
+
+      {project?.recent_jobs.some((job) => job.warning_message || job.status === "completed_with_warnings") ? (
+        <JobWarnings jobs={project.recent_jobs} busyItem={busyItem} onRetry={handleRetry} />
+      ) : null}
 
       {project ? (
         <section className="mvp-panel candidate-panel">
@@ -252,6 +356,94 @@ export function ResearchWorkflowPage() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+function WorkflowBlockers({
+  blockers,
+  busyItem,
+  onExclude,
+  onRetry,
+}: {
+  blockers: BlockingItem[];
+  busyItem: string | null;
+  onExclude: (blocker: BlockingItem) => Promise<void>;
+  onRetry: (jobId: string) => Promise<void>;
+}) {
+  return (
+    <section className="mvp-panel blocker-panel" aria-labelledby="workflow-blockers-title">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Action required</p>
+          <h3 id="workflow-blockers-title">Resolve failed work before synthesis</h3>
+        </div>
+        <span className="status-pill status-failed">{blockers.length} blocked</span>
+      </div>
+      <div className="blocker-list">
+        {blockers.map((blocker) => {
+          const excludeKey = `exclude:${blocker.target_type}:${blocker.target_id}`;
+          return (
+            <article className="blocker-card" key={`${blocker.target_type}:${blocker.target_id}:${blocker.job_id ?? "none"}`}>
+              <div>
+                <span>{blocker.target_type}</span>
+                <strong>{blocker.title}</strong>
+                <p>{blocker.error ?? "This item failed and is preventing synthesis."}</p>
+              </div>
+              <div className="blocker-actions">
+                {blocker.job_id ? (
+                  <button
+                    type="button"
+                    onClick={() => void onRetry(blocker.job_id!)}
+                    disabled={busyItem !== null}
+                  >
+                    {busyItem === `retry:${blocker.job_id}` ? "Retrying..." : "Retry"}
+                  </button>
+                ) : null}
+                {blocker.target_type !== "synthesis" ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void onExclude(blocker)}
+                    disabled={busyItem !== null}
+                  >
+                    {busyItem === excludeKey ? "Excluding..." : "Exclude"}
+                  </button>
+                ) : null}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function JobWarnings({ jobs, busyItem, onRetry }: { jobs: Job[]; busyItem: string | null; onRetry: (jobId: string) => Promise<void> }) {
+  const warningJobs = jobs.filter((job) => job.warning_message || job.status === "completed_with_warnings");
+  return (
+    <section className="mvp-panel job-warning-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Workflow notices</p>
+          <h3>Job warnings and recovery</h3>
+        </div>
+      </div>
+      <div className="job-warning-list">
+        {warningJobs.map((job) => (
+          <article key={job.id}>
+            <div>
+              <strong>{job.job_type.replace(/_/g, " ")}</strong>
+              <p>{job.warning_message ?? "This job completed with warnings."}</p>
+            </div>
+            {job.status === "completed_with_warnings" ? (
+              <button type="button" className="secondary-button" onClick={() => void onRetry(job.id)} disabled={busyItem !== null}>
+                {busyItem === `retry:${job.id}` ? "Retrying..." : "Retry"}
+              </button>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -464,13 +656,13 @@ function getStepIndex(status: string | undefined, busy: boolean) {
   if (status === "no_candidates") {
     return 1;
   }
-  if (["importing", "analyzing"].includes(status)) {
+  if (["importing", "analyzing", "blocked"].includes(status)) {
     return 3;
   }
-  if (status === "synthesizing") {
+  if (["synthesis_queued", "synthesizing"].includes(status)) {
     return 4;
   }
-  if (status === "done") {
+  if (["done", "degraded"].includes(status)) {
     return 5;
   }
   return 1;
@@ -538,6 +730,7 @@ function ScoreMeter({ score }: { score: number }) {
 function ResearchBriefView({ brief }: { brief: ResearchBrief }) {
   return (
     <div className="brief-layout">
+      <GenerationNotice mode={brief.generation_mode} warnings={brief.warnings} />
       <div className="brief-summary brief-executive">
         <span>Executive synthesis</span>
         <p>{brief.executive_summary}</p>
@@ -551,9 +744,7 @@ function ResearchBriefView({ brief }: { brief: ResearchBrief }) {
               <p>{finding.summary}</p>
               <div className="citation-row">
                 {finding.citations.map((citation, citationIndex) => (
-                  <span className="citation-chip" key={`${key}-${index}-${citationIndex}`}>
-                    p.{citation.page}
-                  </span>
+                  <ResearchCitationLink citation={citation} key={`${key}-${index}-${citationIndex}`} />
                 ))}
               </div>
             </article>

@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { GenerationNotice } from "../components/GenerationNotice";
+import { ResearchCitationLink } from "../components/ResearchCitationLink";
 import {
   discoverResearchCandidates,
   getResearchProject,
@@ -79,6 +81,10 @@ export function ProjectWorkspacePage() {
     );
   }
 
+  const canSynthesize = project.blocking_items.length === 0
+    && project.papers.length > 0
+    && project.papers.every((paper) => ["ready", "degraded"].includes(paper.status));
+
   return (
     <div className="page-content">
       <section className="workbench-header">
@@ -130,11 +136,13 @@ export function ProjectWorkspacePage() {
         </StageCard>
 
         <StageCard icon={<Lightbulb size={18} />} title="Synthesize" active={Boolean(project.synthesis_json)}>
-          <button type="button" disabled={busyAction === "synthesize"} onClick={() => void runAction("synthesize", () => synthesizeResearchProject(project.id))}>
+          <button type="button" disabled={busyAction === "synthesize" || !canSynthesize} onClick={() => void runAction("synthesize", () => synthesizeResearchProject(project.id))}>
             <Lightbulb size={17} />
             Generate brief
           </button>
-          <p className="muted-line">Strictly cited findings and directions</p>
+          <p className="muted-line">
+            {project.blocking_items.length ? "Resolve failed work before synthesis." : "Strictly cited findings and directions"}
+          </p>
         </StageCard>
       </section>
 
@@ -243,6 +251,7 @@ function CandidateRow({ candidate, selected, onToggle }: { candidate: ResearchCa
 function ResearchBriefView({ brief }: { brief: ResearchBrief }) {
   return (
     <div className="brief-layout">
+      <GenerationNotice mode={brief.generation_mode} warnings={brief.warnings} />
       <p className="brief-summary">{brief.executive_summary}</p>
       {briefSections.map(([key, label]) => (
         <div className="brief-section" key={key}>
@@ -253,9 +262,7 @@ function ResearchBriefView({ brief }: { brief: ResearchBrief }) {
               <p>{finding.summary}</p>
               <div className="citation-row">
                 {finding.citations.map((citation, citationIndex) => (
-                  <span className="citation-chip" key={`${key}-${index}-${citationIndex}`}>
-                    p.{citation.page}
-                  </span>
+                  <ResearchCitationLink citation={citation} key={`${key}-${index}-${citationIndex}`} />
                 ))}
               </div>
             </article>

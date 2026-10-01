@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, getPaperStatus } from "./api";
+import {
+  ApiError,
+  excludeResearchWorkflowCandidate,
+  excludeResearchWorkflowPaper,
+  getPaperStatus,
+  retryJob,
+} from "./api";
 
 describe("API client contracts", () => {
   afterEach(() => {
@@ -66,5 +72,30 @@ describe("API client contracts", () => {
     );
 
     await expect(getPaperStatus("paper-1")).rejects.toThrow("Field required");
+  });
+
+  it("calls the workflow recovery endpoints with the expected methods", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockImplementation(async () => (
+      new Response(JSON.stringify({ id: "result" }), { status: 200, headers: { "Content-Type": "application/json" } })
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await retryJob("job-1", controller.signal);
+    await excludeResearchWorkflowCandidate("project-1", "candidate-1", controller.signal);
+    await excludeResearchWorkflowPaper("project-1", "paper-1", controller.signal);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost:8000/api/jobs/job-1/retry", {
+      method: "POST",
+      signal: controller.signal,
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost:8000/api/research-workflows/project-1/candidates/candidate-1", {
+      method: "DELETE",
+      signal: controller.signal,
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "http://localhost:8000/api/research-workflows/project-1/papers/paper-1", {
+      method: "DELETE",
+      signal: controller.signal,
+    });
   });
 });

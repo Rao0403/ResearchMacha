@@ -179,6 +179,32 @@ export async function getResearchWorkflowStatus(projectId: string, signal?: Abor
   return request<ResearchProjectStatus>(`/research-workflows/${projectId}/status`, { signal });
 }
 
+export async function retryJob(jobId: string, signal?: AbortSignal): Promise<Job> {
+  return request<Job>(`/jobs/${jobId}/retry`, { method: "POST", signal });
+}
+
+export async function excludeResearchWorkflowCandidate(
+  projectId: string,
+  candidateId: string,
+  signal?: AbortSignal,
+): Promise<ResearchProject> {
+  return request<ResearchProject>(`/research-workflows/${projectId}/candidates/${candidateId}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
+export async function excludeResearchWorkflowPaper(
+  projectId: string,
+  paperId: string,
+  signal?: AbortSignal,
+): Promise<ResearchProject> {
+  return request<ResearchProject>(`/research-workflows/${projectId}/papers/${paperId}`, {
+    method: "DELETE",
+    signal,
+  });
+}
+
 export async function createDemoProject(signal?: AbortSignal): Promise<ResearchProject> {
   return request<ResearchProject>("/research-projects/demo", { method: "POST", signal });
 }

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { GenerationNotice } from "../components/GenerationNotice";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { analyzePaper, batchUploadPapers, createBatchSummary, getPaperStatus } from "../lib/api";
 import type { BatchSummaryResponse, LibraryPaper } from "../types";
@@ -255,21 +256,26 @@ export function BatchSummaryPage() {
           <BatchStats papers={papers} />
           <div className="simple-list">
             {papers.map((paper) => (
-              <div className="paper-status-row" key={paper.id}>
-                <Link to={`/reader/${paper.id}`}>{paper.title}</Link>
-                <div className="paper-row-actions">
-                  <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
-                  {paper.status === "failed" ? (
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => void retryPaperAnalysis(paper.id)}
-                      disabled={retryingIds.has(paper.id)}
-                    >
-                      {retryingIds.has(paper.id) ? "Retrying..." : "Retry"}
-                    </button>
-                  ) : null}
+              <div className="batch-paper-entry" key={paper.id}>
+                <div className="paper-status-row">
+                  <Link to={`/reader/${paper.id}`}>{paper.title}</Link>
+                  <div className="paper-row-actions">
+                    <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
+                    {paper.status === "failed" || paper.status === "degraded" || paper.analysis_warning ? (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => void retryPaperAnalysis(paper.id)}
+                        disabled={retryingIds.has(paper.id)}
+                      >
+                        {retryingIds.has(paper.id) ? "Retrying..." : "Retry"}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
+                {paper.status === "degraded" || paper.analysis_warning ? (
+                  <GenerationNotice mode={paper.analysis_mode} warnings={paper.analysis_warning} label="Paper analysis warning" />
+                ) : null}
               </div>
             ))}
           </div>
@@ -287,6 +293,7 @@ export function BatchSummaryPage() {
               Export CSV
             </button>
           </div>
+          <GenerationNotice mode={summary.generation_mode} warnings={summary.warnings} />
           <p className="brief-summary">{summary.overall_takeaway}</p>
           <div className="table-wrap">
             <table className="data-table summary-table">

@@ -718,9 +718,135 @@ textarea:focus {
   color: var(--success);
 }
 
-.status-failed {
+.status-degraded,
+.status-completed_with_warnings {
+  background: rgba(156, 107, 31, 0.12);
+  color: var(--warning);
+}
+
+.status-failed,
+.status-blocked {
   background: rgba(142, 61, 61, 0.12);
   color: var(--danger);
+}
+
+.generation-notice {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid rgba(156, 107, 31, 0.24);
+  border-radius: var(--radius-sm);
+  padding: 0.8rem 0.9rem;
+  background: rgba(156, 107, 31, 0.08);
+  color: var(--warning);
+}
+
+.generation-notice strong,
+.generation-notice p {
+  margin: 0;
+}
+
+.generation-notice p {
+  color: inherit;
+  line-height: 1.45;
+}
+
+.generation-notice-mock,
+.generation-notice-unknown_legacy {
+  border-color: rgba(142, 61, 61, 0.24);
+  background: rgba(142, 61, 61, 0.08);
+  color: var(--danger);
+}
+
+.blocker-panel {
+  border-color: rgba(142, 61, 61, 0.28);
+}
+
+.blocker-list,
+.job-warning-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.blocker-card,
+.job-warning-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem;
+  background: rgba(255, 253, 248, 0.68);
+}
+
+.blocker-card > div:first-child,
+.job-warning-list article > div {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.blocker-card span {
+  color: var(--danger);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.blocker-card p,
+.job-warning-list p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.blocker-actions {
+  display: flex;
+  gap: 0.55rem;
+}
+
+.provenance-citation {
+  display: grid;
+  min-width: min(260px, 100%);
+  max-width: 420px;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.8rem;
+  background: rgba(164, 79, 42, 0.06);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.provenance-citation > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.provenance-citation em {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.provenance-citation q {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.provenance-citation-link:hover {
+  border-color: rgba(164, 79, 42, 0.4);
+  background: rgba(164, 79, 42, 0.11);
+}
+
+.batch-paper-entry {
+  display: grid;
+  gap: 0.55rem;
 }
 
 .authors,
@@ -1865,8 +1991,18 @@ textarea:focus {
   .batch-hero,
   .reader-title-row,
   .paper-status-row,
-  .trace-step {
+  .trace-step,
+  .blocker-card,
+  .job-warning-list article {
     display: grid;
+  }
+
+  .blocker-actions {
+    justify-content: stretch;
+  }
+
+  .blocker-actions button {
+    flex: 1;
   }
 
   .nav-links {

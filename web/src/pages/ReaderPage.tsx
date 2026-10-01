@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
+import { GenerationNotice } from "../components/GenerationNotice";
 import { PdfViewer } from "../components/PdfViewer";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
@@ -26,6 +27,8 @@ const summaryLabels: Array<[SummarySectionKey, string]> = [
 
 export function ReaderPage() {
   const { paperId: routePaperId } = useParams();
+  const [searchParams] = useSearchParams();
+  const requestedPage = parsePageNumber(searchParams.get("page"));
   const [paperIdInput, setPaperIdInput] = useState(routePaperId ?? "");
   const [paper, setPaper] = useState<PaperDetail | null>(null);
   const [summaryPayload, setSummaryPayload] = useState<PaperSummaryResponse | null>(null);
@@ -50,9 +53,9 @@ export function ReaderPage() {
   useEffect(() => {
     if (routePaperId) {
       setPaperIdInput(routePaperId);
-      openPaper(routePaperId);
+      openPaper(routePaperId, requestedPage);
     }
-  }, [routePaperId]);
+  }, [routePaperId, requestedPage]);
 
   useEffect(() => {
     return () => {
@@ -94,7 +97,7 @@ export function ReaderPage() {
     },
   });
 
-  function openPaper(paperId: string) {
+  function openPaper(paperId: string, initialPage?: number | null) {
     const normalizedId = paperId.trim();
     if (!normalizedId) {
       return;
@@ -115,8 +118,10 @@ export function ReaderPage() {
       setMessages([]);
       setSessionId(undefined);
       setQuestion("");
-      setCurrentPage(1);
-      setTargetPage(null);
+      setCurrentPage(initialPage ?? 1);
+      setTargetPage(initialPage ?? null);
+    } else if (initialPage) {
+      setTargetPage(initialPage);
     }
     setMessage(null);
     setSending(false);
@@ -346,6 +351,10 @@ export function ReaderPage() {
 
       {message ? <p className="status-note">{message}</p> : null}
 
+      {paper?.analysis_warning ? (
+        <GenerationNotice mode={paper.analysis_mode} warnings={paper.analysis_warning} label="Paper analysis warning" />
+      ) : null}
+
       <div className="reader-grid">
         <section className="pdf-workspace" ref={pdfSectionRef}>
           {paper ? (
@@ -358,7 +367,7 @@ export function ReaderPage() {
                 <div className="reader-actions">
                   <span className="status-pill">page {currentPage}</span>
                   <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
-                  {paper.status === "failed" ? (
+                  {paper.status === "failed" || paper.status === "degraded" || paper.analysis_warning ? (
                     <button type="button" className="secondary-button" onClick={() => void handleRetryAnalysis()} disabled={retrying}>
                       {retrying ? "Retrying..." : "Retry analysis"}
                     </button>
@@ -420,6 +429,7 @@ function NotesPanel({ summary, onCitationClick }: { summary: PaperSummary | null
 
   return (
     <div className="notes-list">
+      <GenerationNotice mode={summary.generation_mode} warnings={summary.warning} />
       {summaryLabels.map(([key, label]) => (
         <section key={key}>
           <h4>{label}</h4>
@@ -485,6 +495,9 @@ function ChatPanel({
       <div className="chat-thread">
         {messages.map((message) => (
           <article className={`chat-bubble chat-${message.role}`} key={message.id}>
+            {message.role === "assistant" ? (
+              <GenerationNotice mode={message.generation_mode} warnings={message.warning} />
+            ) : null}
             <p>{message.content}</p>
             <div className="citation-row">
               {message.citations.map((citation, index) => (
@@ -528,4 +541,12 @@ function getErrorMessage(error: unknown): string {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function parsePageNumber(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : null;
 }
