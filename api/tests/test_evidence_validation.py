@@ -313,6 +313,57 @@ def test_structured_invocation_stops_after_two_invalid_attempts(monkeypatch) -> 
     assert len(calls) == 2
 
 
+def test_structured_invocation_does_not_retry_provider_timeout(monkeypatch) -> None:
+    calls = []
+
+    def fake_invoke(*args, **kwargs):
+        calls.append(1)
+        raise TimeoutError("provider request timed out")
+
+    monkeypatch.setattr(ai, "invoke_structured_once", fake_invoke)
+    monkeypatch.setattr(ai.settings, "ai_chat_timeout_seconds", 12)
+
+    with pytest.raises(ai.AIProviderError, match="timed out after 12 seconds; repair attempt skipped"):
+        ai.invoke_structured_json(
+            object(),
+            ResearchPlan,
+            "Plan",
+            "Question: {question}",
+            {"question": "Q"},
+        )
+
+    assert len(calls) == 1
+
+
+def test_ollama_clients_have_bounded_requests_and_low_reasoning(monkeypatch) -> None:
+    chat_options = {}
+    embedding_options = {}
+
+    def fake_chat(**kwargs):
+        chat_options.update(kwargs)
+        return object()
+
+    def fake_embeddings(**kwargs):
+        embedding_options.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(ai, "ChatOllama", fake_chat)
+    monkeypatch.setattr(ai, "OllamaEmbeddings", fake_embeddings)
+    monkeypatch.setattr(ai.settings, "ai_provider", "ollama")
+    monkeypatch.setattr(ai.settings, "ai_chat_timeout_seconds", 180)
+    monkeypatch.setattr(ai.settings, "ai_embedding_timeout_seconds", 60)
+    monkeypatch.setattr(ai.settings, "ai_max_output_tokens", 2500)
+    monkeypatch.setattr(ai.settings, "ollama_reasoning_effort", "low")
+
+    ai.build_chat_model()
+    ai.build_embedding_model()
+
+    assert chat_options["reasoning"] == "low"
+    assert chat_options["num_predict"] == 2500
+    assert chat_options["client_kwargs"] == {"timeout": 180}
+    assert embedding_options["client_kwargs"] == {"timeout": 60}
+
+
 def test_ollama_structured_retry_switches_from_schema_to_json_mode(monkeypatch) -> None:
     class FakeOllama:
         pass

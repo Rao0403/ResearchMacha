@@ -112,12 +112,14 @@ def process_analysis_job(
         db.add_all([job, paper])
         db.commit()
 
+        begin_job_phase(db, job, "extracting_pdf")
         if heartbeat:
             heartbeat()
         pages = extract_pdf_pages(paper.pdf_path)
         chunks = chunk_pages(pages)
         if heartbeat:
             heartbeat()
+        begin_job_phase(db, job, "embedding_chunks")
         clear_fallback_events()
         provider = None
         provider_error: AIProviderError | None = None
@@ -169,6 +171,7 @@ def process_analysis_job(
             .order_by(PaperChunk.chunk_index.asc())
             .all()
         )
+        begin_job_phase(db, job, "indexing_chunks")
         get_vector_store().upsert_chunks(replacement_chunks)
         if heartbeat:
             heartbeat()
@@ -183,6 +186,7 @@ def process_analysis_job(
             }
             for chunk in replacement_chunks
         ]
+        begin_job_phase(db, job, "generating_summary")
         try:
             if provider is None:
                 raise provider_error or AIProviderError("AI provider is unavailable")
@@ -209,6 +213,7 @@ def process_analysis_job(
                 job.warning_message = warning
                 job.finished_at = now()
                 job.lease_expires_at = None
+                finish_job_phase(job, "completed_with_warnings")
                 paper.status = previous_status or "ready"
                 paper.analysis_warning = warning
                 db.add_all([paper, job])
@@ -223,6 +228,7 @@ def process_analysis_job(
         warnings.extend(event["reason"] for event in fallback_events if event["reason"] not in warnings)
         warning_message = "; ".join(warnings) or None
 
+        begin_job_phase(db, job, "persisting_analysis")
         replacement_summary = PaperSummary(
             paper_id=paper.id,
             problem_or_hypothesis=summary_payload.sections["problem_or_hypothesis"],
@@ -270,6 +276,7 @@ def process_analysis_job(
                 str(exc),
                 {"paper_id": paper.id, "old_chunk_count": len(old_chunks)},
             )
+        begin_job_phase(db, job, "updating_memory")
         try:
             create_paper_fact_memory(
                 db,
@@ -294,6 +301,7 @@ def process_analysis_job(
             job.warning_message = warning_message
             job.finished_at = now()
             job.lease_expires_at = None
+            finish_job_phase(job, "completed_with_warnings" if warning_message else "completed")
             db.add(job)
             db.commit()
     except Exception as exc:  # noqa: BLE001
@@ -307,6 +315,7 @@ def process_analysis_job(
             else:
                 job.status = JobStatus.FAILED
                 job.error_message = str(exc)
+                finish_job_phase(job, "failed")
             job.finished_at = now()
             job.lease_expires_at = None
             db.add(job)
@@ -388,3 +397,45 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
 
 def now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def begin_job_phase(db: Session, job: Job, phase: str) -> None:
+    timestamp = now().isoformat()
+    payload = dict(job.payload or {})
+    history = list(payload.get("phase_history") or [])
+    previous_phase = payload.get("phase")
+    previous_started_at = payload.get("phase_started_at")
+    if previous_phase and previous_started_at:
+        history.append(
+            {
+                "phase": previous_phase,
+                "started_at": previous_started_at,
+                "finished_at": timestamp,
+            }
+        )
+    payload["phase"] = phase
+    payload["phase_started_at"] = timestamp
+    payload["phase_history"] = history[-12:]
+    job.payload = payload
+    db.add(job)
+    db.commit()
+
+
+def finish_job_phase(job: Job, outcome: str) -> None:
+    timestamp = now().isoformat()
+    payload = dict(job.payload or {})
+    history = list(payload.get("phase_history") or [])
+    current_phase = payload.get("phase")
+    current_started_at = payload.get("phase_started_at")
+    if current_phase and current_started_at:
+        history.append(
+            {
+                "phase": current_phase,
+                "started_at": current_started_at,
+                "finished_at": timestamp,
+            }
+        )
+    payload["phase"] = outcome
+    payload.pop("phase_started_at", None)
+    payload["phase_history"] = history[-12:]
+    job.payload = payload

@@ -130,7 +130,17 @@ def test_successful_reanalysis_swaps_generation_atomically(tmp_path, monkeypatch
         assert paper.analysis_mode == "mock"
         assert {chunk.analysis_generation for chunk in chunks} == {2}
         assert all(chunk.page_start == chunk.page_end == 4 for chunk in chunks)
-        assert db.get(Job, job.id).status == JobStatus.COMPLETED_WITH_WARNINGS
+        completed_job = db.get(Job, job.id)
+        assert completed_job.status == JobStatus.COMPLETED_WITH_WARNINGS
+        assert completed_job.payload["phase"] == "completed_with_warnings"
+        assert [entry["phase"] for entry in completed_job.payload["phase_history"]] == [
+            "extracting_pdf",
+            "embedding_chunks",
+            "indexing_chunks",
+            "generating_summary",
+            "persisting_analysis",
+            "updating_memory",
+        ]
         assert db.query(PaperSummary).filter(PaperSummary.paper_id == paper_id).one().conclusion != "Previous conclusion"
     assert len(store.upserted) == 1
     assert len(store.deleted) == 1

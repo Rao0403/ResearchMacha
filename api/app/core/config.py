@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_chat_model: str = "gpt-oss:20b-cloud"
     ollama_embed_model: str = "nomic-embed-text"
+    ai_chat_timeout_seconds: float = Field(default=180, gt=0)
+    ai_embedding_timeout_seconds: float = Field(default=60, gt=0)
+    ai_max_output_tokens: int = Field(default=2500, gt=0)
+    ollama_reasoning_effort: str = "low"
 
     model_config = SettingsConfigDict(
         env_file=(ROOT_DIR / ".env", ROOT_DIR / ".env.local"),

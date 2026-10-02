@@ -1016,6 +1016,11 @@ def invoke_structured_json(
                 validator(result)
             return result
         except Exception as exc:  # the second failure is converted into a stable domain error
+            if is_provider_timeout(exc):
+                raise AIProviderError(
+                    "Structured generation timed out after "
+                    f"{settings.ai_chat_timeout_seconds:g} seconds; repair attempt skipped."
+                ) from exc
             if attempt == 1:
                 first_error = exc
                 continue
@@ -1071,17 +1076,55 @@ def escape_template_text(value: str) -> str:
     return value.replace("{", "{{").replace("}", "}}")
 
 
+def is_provider_timeout(error: BaseException) -> bool:
+    """Recognize timeout errors even when a provider SDK wraps the HTTP exception."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        class_name = type(current).__name__.lower()
+        if isinstance(current, TimeoutError) or "timeout" in class_name:
+            return True
+        message = str(current).lower()
+        if "timed out" in message or "timeout exceeded" in message:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def build_chat_model() -> Any:
     if settings.ai_provider == "openai":
-        return ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key)
-    return ChatOllama(model=settings.ollama_chat_model, base_url=settings.ollama_base_url, temperature=0)
+        return ChatOpenAI(
+            model=settings.openai_model,
+            api_key=settings.openai_api_key,
+            request_timeout=settings.ai_chat_timeout_seconds,
+            max_tokens=settings.ai_max_output_tokens,
+            max_retries=0,
+        )
+    return ChatOllama(
+        model=settings.ollama_chat_model,
+        base_url=settings.ollama_base_url,
+        temperature=0,
+        reasoning=settings.ollama_reasoning_effort,
+        num_predict=settings.ai_max_output_tokens,
+        client_kwargs={"timeout": settings.ai_chat_timeout_seconds},
+    )
 
 
 def build_embedding_model() -> Any:
     if settings.ai_provider == "openai" and OpenAIEmbeddings is not None:
-        return OpenAIEmbeddings(model=settings.openai_embed_model, api_key=settings.openai_api_key)
+        return OpenAIEmbeddings(
+            model=settings.openai_embed_model,
+            api_key=settings.openai_api_key,
+            request_timeout=settings.ai_embedding_timeout_seconds,
+            max_retries=0,
+        )
     if settings.ai_provider == "ollama" and OllamaEmbeddings is not None:
-        return OllamaEmbeddings(model=settings.ollama_embed_model, base_url=settings.ollama_base_url)
+        return OllamaEmbeddings(
+            model=settings.ollama_embed_model,
+            base_url=settings.ollama_base_url,
+            client_kwargs={"timeout": settings.ai_embedding_timeout_seconds},
+        )
     return None
 
 
