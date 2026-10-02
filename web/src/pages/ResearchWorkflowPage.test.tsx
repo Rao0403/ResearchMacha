@@ -224,4 +224,24 @@ describe("ResearchWorkflowPage reliability controls", () => {
     const citation = screen.getByRole("link", { name: /Grounded Retrieval.*Page 7.*Retrieval improved grounding/i });
     expect(citation).toHaveAttribute("href", "/reader/paper-1?page=7");
   });
+
+  it("lets a researcher review and approve a candidate with accessible controls", async () => {
+    const awaitingProject = project({ status: "awaiting_approval", blocking_items: [], recent_jobs: [] });
+    const importingProject = project({ status: "importing", blocking_items: [], recent_jobs: [] });
+    vi.mocked(api.approveResearchWorkflow).mockResolvedValue(importingProject);
+    const user = await startWorkflow(awaitingProject);
+
+    const checkbox = screen.getByRole("checkbox", { name: "Select Failed candidate" });
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+    expect(screen.getByRole("button", { name: "Approve selected papers" })).toBeDisabled();
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "Approve selected papers" }));
+
+    await waitFor(() => expect(api.approveResearchWorkflow).toHaveBeenCalledWith(
+      "project-1",
+      ["candidate-1"],
+      expect.any(AbortSignal),
+    ));
+  });
 });

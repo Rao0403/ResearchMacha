@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { GenerationNotice } from "../components/GenerationNotice";
 import { ResearchCitationLink } from "../components/ResearchCitationLink";
+import { ActionButton, Alert, Field, PageHeader, StatusBadge, Surface } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import {
   approveResearchWorkflow,
@@ -25,7 +26,12 @@ import type {
   ResearchProject,
 } from "../types";
 
-const workflowSteps = ["Planning", "Finding papers", "Awaiting approval", "Analyzing", "Synthesizing", "Done"];
+const workflowSteps = [
+  { label: "Discover", description: "Plan and find relevant papers" },
+  { label: "Select", description: "Review the recommended evidence" },
+  { label: "Analyze", description: "Import and process approved papers" },
+  { label: "Synthesize", description: "Build the citation-backed brief" },
+];
 
 const briefSections: Array<[keyof ResearchBrief, string]> = [
   ["key_findings", "Key findings"],
@@ -239,48 +245,45 @@ export function ResearchWorkflowPage() {
   }
 
   return (
-    <div className="mvp-page research-page">
-      <section className="research-hero">
-        <div className="research-hero-copy">
-          <p className="eyebrow">Research workflow</p>
-          <h2>Ask one research question. Get a cited evidence brief.</h2>
-          <p>
-            The agent plans search queries, finds arXiv candidates, ranks evidence, and asks for approval before
-            importing papers.
-          </p>
-          <div className="hero-chip-row">
-            <span>Explainable tool trace</span>
-            <span>Qdrant retrieval</span>
-            <span>Memory-aware selection</span>
-          </div>
-        </div>
+    <div className="research-workspace">
+      <PageHeader
+        eyebrow="Research workflow"
+        title="Ask one research question. Get a cited evidence brief."
+        description="Discover relevant papers, choose the evidence, and follow every synthesized claim back to its source."
+      />
 
-        <form className="research-command command-card" onSubmit={handleSubmit}>
-          <label>
-            <span>Research question</span>
+      <Surface className="research-question-panel">
+        <form className="research-question-form" onSubmit={handleSubmit}>
+          <Field label="Research question" htmlFor="research-question" hint="Be specific about the domain, method, population, or outcome you want to investigate.">
             <textarea
+              id="research-question"
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
               placeholder="Example: What are reliable methods for reducing hallucinations in retrieval augmented generation systems?"
-              rows={5}
+              rows={4}
             />
-          </label>
-          <div className="command-footer">
-            <span>Press Start, then only approve the selected papers.</span>
-            <button type="submit" disabled={submitting}>
-              {submitting ? "Agent running..." : "Start research"}
-            </button>
-          </div>
+          </Field>
+          <ActionButton type="submit" busy={submitting} busyLabel="Finding papers...">Start research</ActionButton>
         </form>
-      </section>
+      </Surface>
 
-      <StatusTrack status={project?.status} busy={submitting} />
-      {message ? <p className="status-note">{message}</p> : null}
+      <WorkflowProgress status={project?.status} busy={submitting} />
+      {message ? <Alert tone="danger" title="The workflow could not continue" role="alert"><p>{message}</p></Alert> : null}
       {submitting ? <AgentLoadingState /> : null}
       {project ? <WorkflowStats project={project} selectedCount={selected.size} /> : null}
 
-      {project?.agent_run ? <AgentTrace run={project.agent_run} /> : null}
-      {project?.memory_signals?.length ? <MemorySignals memories={project.memory_signals} /> : null}
+      {project && (project.agent_run || project.memory_signals?.length) ? (
+        <details className="research-technical-details">
+          <summary>
+            <span>Technical details</span>
+            <small>Tool execution and reusable memory signals</small>
+          </summary>
+          <div className="research-technical-content">
+            {project.agent_run ? <AgentTrace run={project.agent_run} /> : null}
+            {project.memory_signals?.length ? <MemorySignals memories={project.memory_signals} /> : null}
+          </div>
+        </details>
+      ) : null}
 
       {project?.blocking_items.length ? (
         <WorkflowBlockers
@@ -296,16 +299,17 @@ export function ResearchWorkflowPage() {
       ) : null}
 
       {project ? (
-        <section className="mvp-panel candidate-panel">
-          <div className="panel-heading">
+        <Surface className="candidate-panel">
+          <div className="research-section-heading">
             <div>
-              <p className="eyebrow">Selected by agent</p>
+              <p className="research-section-kicker">Evidence selection</p>
               <h3>Recommended papers</h3>
+              <p>Review relevance and remove weak matches before any PDFs are imported.</p>
             </div>
-            <span className={`status-pill status-${project.status}`}>{project.status}</span>
+            <StatusBadge status={project.status} />
           </div>
 
-          <CandidateTable candidates={project.candidates} selected={selected} onToggle={toggleCandidate} />
+          <CandidateCards candidates={project.candidates} selected={selected} onToggle={toggleCandidate} />
 
           {project.status === "no_candidates" ? (
             <p className="status-note">
@@ -317,43 +321,48 @@ export function ResearchWorkflowPage() {
           {project.status === "awaiting_approval" && project.candidates.length > 0 ? (
             <div className="approval-row">
               <p>{selected.size} papers selected. You can unselect weak matches before continuing.</p>
-              <button type="button" onClick={() => void handleApprove()} disabled={approving || selected.size === 0}>
-                {approving ? "Importing and analyzing..." : "Approve selected papers"}
-              </button>
+              <ActionButton
+                type="button"
+                onClick={() => void handleApprove()}
+                disabled={selected.size === 0}
+                busy={approving}
+                busyLabel="Starting analysis..."
+              >Approve selected papers</ActionButton>
             </div>
           ) : null}
-        </section>
+        </Surface>
       ) : null}
 
       {project?.papers.length ? (
-        <section className="mvp-panel imported-panel">
-          <div className="panel-heading">
+        <Surface className="imported-panel">
+          <div className="research-section-heading">
             <div>
-              <p className="eyebrow">Analysis progress</p>
+              <p className="research-section-kicker">Analysis</p>
               <h3>Imported papers</h3>
             </div>
           </div>
-          <div className="simple-list">
+          <div className="research-paper-list">
             {project.papers.map((paper) => (
               <Link to={`/reader/${paper.id}`} className="paper-status-row" key={paper.id}>
                 <span>{paper.title}</span>
-                <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
+                <StatusBadge status={paper.status} />
               </Link>
             ))}
           </div>
-        </section>
+        </Surface>
       ) : null}
 
       {project?.synthesis_json ? (
-        <section className="mvp-panel brief-panel">
-          <div className="panel-heading">
+        <Surface className="brief-panel">
+          <div className="research-section-heading">
             <div>
-              <p className="eyebrow">Final brief</p>
+              <p className="research-section-kicker">Final brief</p>
               <h3>Cited findings and next directions</h3>
+              <p>Generated claims are separated from the exact evidence used to support them.</p>
             </div>
           </div>
           <ResearchBriefView brief={project.synthesis_json} />
-        </section>
+        </Surface>
       ) : null}
     </div>
   );
@@ -371,13 +380,14 @@ function WorkflowBlockers({
   onRetry: (jobId: string) => Promise<void>;
 }) {
   return (
-    <section className="mvp-panel blocker-panel" aria-labelledby="workflow-blockers-title">
-      <div className="panel-heading">
+    <Surface className="blocker-panel" aria-labelledby="workflow-blockers-title">
+      <div className="research-section-heading">
         <div>
-          <p className="eyebrow">Action required</p>
+          <p className="research-section-kicker">Action required</p>
           <h3 id="workflow-blockers-title">Resolve failed work before synthesis</h3>
+          <p>Retry the failed step or exclude that source from this project.</p>
         </div>
-        <span className="status-pill status-failed">{blockers.length} blocked</span>
+        <StatusBadge status="blocked" label={`${blockers.length} blocked`} />
       </div>
       <div className="blocker-list">
         {blockers.map((blocker) => {
@@ -391,40 +401,46 @@ function WorkflowBlockers({
               </div>
               <div className="blocker-actions">
                 {blocker.job_id ? (
-                  <button
+                  <ActionButton
                     type="button"
+                    size="compact"
                     onClick={() => void onRetry(blocker.job_id!)}
-                    disabled={busyItem !== null}
+                    busy={busyItem === `retry:${blocker.job_id}`}
+                    busyLabel="Retrying..."
+                    disabled={busyItem !== null && busyItem !== `retry:${blocker.job_id}`}
                   >
-                    {busyItem === `retry:${blocker.job_id}` ? "Retrying..." : "Retry"}
-                  </button>
+                    Retry
+                  </ActionButton>
                 ) : null}
                 {blocker.target_type !== "synthesis" ? (
-                  <button
+                  <ActionButton
                     type="button"
-                    className="secondary-button"
+                    variant="secondary"
+                    size="compact"
                     onClick={() => void onExclude(blocker)}
-                    disabled={busyItem !== null}
+                    busy={busyItem === excludeKey}
+                    busyLabel="Excluding..."
+                    disabled={busyItem !== null && busyItem !== excludeKey}
                   >
-                    {busyItem === excludeKey ? "Excluding..." : "Exclude"}
-                  </button>
+                    Exclude
+                  </ActionButton>
                 ) : null}
               </div>
             </article>
           );
         })}
       </div>
-    </section>
+    </Surface>
   );
 }
 
 function JobWarnings({ jobs, busyItem, onRetry }: { jobs: Job[]; busyItem: string | null; onRetry: (jobId: string) => Promise<void> }) {
   const warningJobs = jobs.filter((job) => job.warning_message || job.status === "completed_with_warnings");
   return (
-    <section className="mvp-panel job-warning-panel">
-      <div className="panel-heading">
+    <Surface className="job-warning-panel">
+      <div className="research-section-heading">
         <div>
-          <p className="eyebrow">Workflow notices</p>
+          <p className="research-section-kicker">Workflow notices</p>
           <h3>Job warnings and recovery</h3>
         </div>
       </div>
@@ -436,23 +452,29 @@ function JobWarnings({ jobs, busyItem, onRetry }: { jobs: Job[]; busyItem: strin
               <p>{job.warning_message ?? "This job completed with warnings."}</p>
             </div>
             {job.status === "completed_with_warnings" ? (
-              <button type="button" className="secondary-button" onClick={() => void onRetry(job.id)} disabled={busyItem !== null}>
-                {busyItem === `retry:${job.id}` ? "Retrying..." : "Retry"}
-              </button>
+              <ActionButton
+                type="button"
+                variant="secondary"
+                size="compact"
+                onClick={() => void onRetry(job.id)}
+                busy={busyItem === `retry:${job.id}`}
+                busyLabel="Retrying..."
+                disabled={busyItem !== null && busyItem !== `retry:${job.id}`}
+              >Retry</ActionButton>
             ) : null}
           </article>
         ))}
       </div>
-    </section>
+    </Surface>
   );
 }
 
 function AgentLoadingState() {
   return (
-    <section className="mvp-panel loading-workbench">
+    <Surface className="loading-workbench" aria-live="polite">
       <div>
-        <p className="eyebrow">Agent running</p>
-        <h3>Planning search, querying arXiv, and selecting candidates...</h3>
+        <p className="research-section-kicker">Discovering evidence</p>
+        <h3>Planning searches and reviewing arXiv candidates...</h3>
       </div>
       <div className="loading-steps" aria-label="Research workflow loading steps">
         <span>Plan search</span>
@@ -460,7 +482,7 @@ function AgentLoadingState() {
         <span>Rank evidence</span>
         <span>Select shortlist</span>
       </div>
-    </section>
+    </Surface>
   );
 }
 
@@ -499,13 +521,13 @@ function WorkflowStats({ project, selectedCount }: { project: ResearchProject; s
 
 function AgentTrace({ run }: { run: AgentRun }) {
   return (
-    <section className="mvp-panel agent-trace-panel">
+    <section className="technical-panel agent-trace-panel">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Agent trace</p>
           <h3>Tool execution timeline</h3>
         </div>
-        <span className={`status-pill status-${run.status}`}>{run.status}</span>
+        <StatusBadge status={run.status} />
       </div>
       <div className="agent-trace">
         {run.steps.map((step) => (
@@ -517,7 +539,7 @@ function AgentTrace({ run }: { run: AgentRun }) {
               {memoryStepSummary(step) ? <p className="memory-note">{memoryStepSummary(step)}</p> : null}
               {fallbackSummary(step) ? <p className="fallback-note">{fallbackSummary(step)}</p> : null}
             </div>
-            <span className={`status-pill status-${step.status}`}>{step.status}</span>
+            <StatusBadge status={step.status} />
           </article>
         ))}
       </div>
@@ -527,7 +549,7 @@ function AgentTrace({ run }: { run: AgentRun }) {
 
 function MemorySignals({ memories }: { memories: ResearchMemory[] }) {
   return (
-    <section className="mvp-panel memory-panel">
+    <section className="technical-panel memory-panel">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Memory signals</p>
@@ -630,45 +652,49 @@ function numberValue(value: unknown) {
   return typeof value === "number" ? value : 0;
 }
 
-function StatusTrack({ status, busy }: { status?: string; busy: boolean }) {
-  const currentIndex = getStepIndex(status, busy);
+function WorkflowProgress({ status, busy }: { status?: string; busy: boolean }) {
+  const currentIndex = getWorkflowStepIndex(status, busy);
   return (
-    <ol className="status-track">
+    <ol className="research-progress" aria-label="Research workflow progress">
       {workflowSteps.map((step, index) => (
-        <li className={index < currentIndex ? "done" : index === currentIndex ? "current" : ""} key={step}>
-          {step}
+        <li className={index < currentIndex ? "done" : index === currentIndex ? "current" : ""} key={step.label}>
+          <span className="research-progress-index" aria-hidden="true">{index + 1}</span>
+          <span>
+            <strong>{step.label}</strong>
+            <small>{step.description}</small>
+          </span>
         </li>
       ))}
     </ol>
   );
 }
 
-function getStepIndex(status: string | undefined, busy: boolean) {
+function getWorkflowStepIndex(status: string | undefined, busy: boolean) {
   if (busy) {
-    return 1;
+    return 0;
   }
   if (!status) {
     return 0;
   }
   if (status === "awaiting_approval") {
-    return 2;
-  }
-  if (status === "no_candidates") {
     return 1;
   }
+  if (status === "no_candidates") {
+    return 0;
+  }
   if (["importing", "analyzing", "blocked"].includes(status)) {
-    return 3;
+    return 2;
   }
   if (["synthesis_queued", "synthesizing"].includes(status)) {
-    return 4;
+    return 3;
   }
   if (["done", "degraded"].includes(status)) {
-    return 5;
+    return 4;
   }
-  return 1;
+  return 0;
 }
 
-function CandidateTable({
+function CandidateCards({
   candidates,
   selected,
   onToggle,
@@ -682,36 +708,35 @@ function CandidateTable({
   }
 
   return (
-    <div className="table-wrap">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Select</th>
-            <th>Paper</th>
-            <th>Year</th>
-            <th>Score</th>
-            <th>Rationale</th>
-          </tr>
-        </thead>
-        <tbody>
-          {candidates.map((candidate) => (
-            <tr className={selected.has(candidate.id) ? "candidate-selected-row" : ""} key={candidate.id}>
-              <td>
-                <input type="checkbox" checked={selected.has(candidate.id)} onChange={() => onToggle(candidate.id)} />
-              </td>
-              <td>
-                <strong>{candidate.title}</strong>
-                <span>{candidate.authors.join(", ") || "Unknown authors"}</span>
-              </td>
-              <td>{candidate.year ?? "n/a"}</td>
-              <td>
+    <div className="candidate-card-list">
+      {candidates.map((candidate) => {
+        const isSelected = selected.has(candidate.id);
+        return (
+          <article className={`candidate-card${isSelected ? " candidate-card-selected" : ""}`} key={candidate.id}>
+            <label className="candidate-card-select">
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => onToggle(candidate.id)}
+                aria-label={`Select ${candidate.title}`}
+              />
+              <span aria-hidden="true">{isSelected ? "Selected" : "Select paper"}</span>
+            </label>
+            <div className="candidate-card-content">
+              <div className="candidate-card-heading">
+                <div>
+                  <h4>{candidate.title}</h4>
+                  <p>{candidate.authors.join(", ") || "Unknown authors"}{candidate.year ? ` · ${candidate.year}` : ""}</p>
+                </div>
                 <ScoreMeter score={candidate.score} />
-              </td>
-              <td>{candidate.rationale}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </div>
+              <p className="candidate-rationale">{candidate.rationale}</p>
+              <p className="candidate-abstract">{candidate.abstract}</p>
+              <a href={candidate.entry_url} target="_blank" rel="noreferrer">View arXiv record</a>
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -729,28 +754,36 @@ function ScoreMeter({ score }: { score: number }) {
 
 function ResearchBriefView({ brief }: { brief: ResearchBrief }) {
   return (
-    <div className="brief-layout">
+    <div className="research-brief">
       <GenerationNotice mode={brief.generation_mode} warnings={brief.warnings} />
-      <div className="brief-summary brief-executive">
+      <div className="research-brief-executive">
         <span>Executive synthesis</span>
         <p>{brief.executive_summary}</p>
       </div>
-      {briefSections.map(([key, label]) => (
-        <section className="brief-section" key={key}>
-          <h4>{label}</h4>
-          {(brief[key] as ResearchFinding[]).map((finding, index) => (
-            <article className="finding-row compact" key={`${key}-${finding.label}-${index}`}>
-              <strong>{finding.label}</strong>
-              <p>{finding.summary}</p>
-              <div className="citation-row">
-                {finding.citations.map((citation, citationIndex) => (
-                  <ResearchCitationLink citation={citation} key={`${key}-${index}-${citationIndex}`} />
-                ))}
-              </div>
-            </article>
-          ))}
-        </section>
-      ))}
+      <div className="research-brief-sections">
+        {briefSections.map(([key, label]) => (
+          <section className="research-brief-section" key={key}>
+            <header>
+              <h4>{label}</h4>
+              <span>{(brief[key] as ResearchFinding[]).length}</span>
+            </header>
+            {(brief[key] as ResearchFinding[]).length ? (brief[key] as ResearchFinding[]).map((finding, index) => (
+              <article className="research-finding" key={`${key}-${finding.label}-${index}`}>
+                <strong>{finding.label}</strong>
+                <p>{finding.summary}</p>
+                <div className="research-finding-evidence">
+                  <span>Supporting evidence</span>
+                  <div className="citation-row">
+                    {finding.citations.map((citation, citationIndex) => (
+                      <ResearchCitationLink citation={citation} key={`${key}-${index}-${citationIndex}`} />
+                    ))}
+                  </div>
+                </div>
+              </article>
+            )) : <p className="research-empty-section">No supported findings were generated for this section.</p>}
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
