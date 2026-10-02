@@ -65,3 +65,7 @@ jobs:
         run: npm exec tsc -- -p tsconfig.app.json --noEmit --incremental false
       - name: Build frontend
         run: npm run build
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run browser UI tests
+        run: npm run test:e2e
