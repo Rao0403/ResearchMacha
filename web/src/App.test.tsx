@@ -15,4 +15,20 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: /ask one research question/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start research/i })).toBeInTheDocument();
   });
+
+  it("provides compact primary navigation and a skip link", () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
+    expect(navigation).toHaveTextContent("Research");
+    expect(navigation).toHaveTextContent("Reader");
+    expect(navigation).toHaveTextContent("Compare");
+    expect(navigation).toHaveTextContent("Library");
+    expect(screen.getByRole("link", { name: "Skip to workspace" })).toHaveAttribute("href", "#main-content");
+    expect(screen.getByRole("main")).toHaveAttribute("id", "main-content");
+  });
 });

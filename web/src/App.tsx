@@ -1,6 +1,6 @@
 import { lazy, Suspense } from "react";
-import { BookOpen, Files, Search, Sparkles } from "lucide-react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { BookOpen, Files, Library, Search } from "lucide-react";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 
 import { BatchSummaryPage } from "./pages/BatchSummaryPage";
 import { LibraryPage } from "./pages/LibraryPage";
@@ -12,58 +12,55 @@ import { SearchPage } from "./pages/SearchPage";
 const ReaderPage = lazy(() => import("./pages/ReaderPage").then((module) => ({ default: module.ReaderPage })));
 
 export function App() {
+  const location = useLocation();
+  const isWideWorkspace = location.pathname === "/reader"
+    || location.pathname.startsWith("/reader/")
+    || location.pathname.startsWith("/papers/");
+
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-lockup">
-          <div>
-            <p className="eyebrow">Agentic research desk</p>
-            <h1>ResearchMacha</h1>
-          </div>
-        </div>
-        <nav className="nav-links">
+      <a className="skip-link" href="#main-content">Skip to workspace</a>
+      <aside className="sidebar" aria-label="Application navigation">
+        <NavLink to="/" className="brand-lockup" aria-label="ResearchMacha home">
+          <span className="brand-mark" aria-hidden="true">RM</span>
+          <span className="brand-name">ResearchMacha</span>
+        </NavLink>
+        <nav className="nav-links" aria-label="Primary navigation">
           <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
             <span className="nav-icon">
               <Search size={17} />
             </span>
-            <span>
-              <strong>Research</strong>
-              <small>Question to cited brief</small>
-            </span>
+            <span>Research</span>
           </NavLink>
           <NavLink to="/reader" className={({ isActive }) => navClass(isActive)}>
             <span className="nav-icon">
               <BookOpen size={17} />
             </span>
-            <span>
-              <strong>Reader</strong>
-              <small>PDF notes and chat</small>
-            </span>
+            <span>Reader</span>
           </NavLink>
           <NavLink to="/batch-summary" className={({ isActive }) => navClass(isActive)}>
             <span className="nav-icon">
               <Files size={17} />
             </span>
-            <span>
-              <strong>Batch Summary</strong>
-              <small>Compare multiple papers</small>
+            <span>Compare</span>
+          </NavLink>
+          <NavLink to="/library" className={({ isActive }) => navClass(isActive)}>
+            <span className="nav-icon">
+              <Library size={17} />
             </span>
+            <span>Library</span>
           </NavLink>
         </nav>
-        <div className="sidebar-note">
-          <Sparkles size={18} />
-          <strong>Local-first AI workbench</strong>
-          <p>Question-driven paper discovery, cited synthesis, and reading support in one local workbench.</p>
-        </div>
       </aside>
 
-      <main className="page-frame">
-        <Suspense fallback={<p className="status-note">Loading workspace...</p>}>
+      <main id="main-content" className={`page-frame${isWideWorkspace ? " page-frame-wide" : ""}`} tabIndex={-1}>
+        <Suspense fallback={<p className="shell-loading" role="status">Loading workspace...</p>}>
           <Routes>
             <Route path="/" element={<ResearchWorkflowPage />} />
             <Route path="/reader" element={<ReaderPage />} />
             <Route path="/reader/:paperId" element={<ReaderPage />} />
             <Route path="/batch-summary" element={<BatchSummaryPage />} />
+            <Route path="/library" element={<LibraryPage />} />
             <Route path="/papers/:paperId" element={<ReaderPage />} />
             <Route path="/debug/projects" element={<ProjectListPage />} />
             <Route path="/debug/discover" element={<SearchPage />} />
