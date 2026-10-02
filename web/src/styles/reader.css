@@ -1,0 +1,381 @@
+.reader-workspace {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.reader-workspace .ui-page-header {
+  align-items: center;
+}
+
+.reader-workspace .ui-page-header-title {
+  font-family: var(--font-research);
+}
+
+.reader-page-indicator {
+  display: inline-flex;
+  min-height: var(--control-height-compact);
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 0.35rem 0.55rem;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.reader-source-panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+}
+
+.reader-source-panel > summary {
+  width: fit-content;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.reader-source-forms {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-4);
+}
+
+.reader-source-forms > span {
+  align-self: center;
+  color: var(--color-text-subtle);
+  font-size: 0.75rem;
+}
+
+.reader-source-forms form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.reader-source-forms label {
+  grid-column: 1 / -1;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.reader-source-forms input {
+  min-height: var(--control-height);
+  padding: 0.5rem 0.7rem;
+}
+
+.reader-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.12fr) minmax(21.5rem, 1fr);
+  gap: var(--space-4);
+  min-height: max(44rem, calc(100dvh - 12rem));
+}
+
+.pdf-workspace,
+.reader-side-panel {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.pdf-workspace {
+  display: grid;
+  grid-template-rows: minmax(42rem, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.pdf-workspace .ui-empty-state {
+  min-height: 42rem;
+}
+
+.pdf-workspace .pdf-viewer {
+  min-height: 42rem;
+  height: 100%;
+  border: 0;
+  border-radius: var(--radius-surface);
+  background: #e9edf2;
+}
+
+.pdf-workspace .pdf-toolbar {
+  border-color: var(--color-border);
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+}
+
+.pdf-workspace .pdf-canvas-shell {
+  padding: var(--space-6);
+}
+
+.pdf-workspace .pdf-canvas-shell canvas {
+  border-radius: var(--radius-compact);
+  box-shadow: 0 12px 32px rgb(23 32 51 / 16%);
+}
+
+.reader-side-panel {
+  position: sticky;
+  top: var(--space-6);
+  display: block;
+  align-self: start;
+  height: min(52rem, calc(100dvh - 3rem));
+  max-height: none;
+  overflow: hidden;
+}
+
+.reader-side-panel .ui-tabs {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+}
+
+.reader-side-panel .ui-tab-list {
+  padding: 0 var(--space-2);
+}
+
+.reader-side-panel .ui-tab {
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+
+.reader-side-panel [role="tabpanel"] {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.notes-list,
+.reader-chat {
+  height: 100%;
+  padding: var(--space-4);
+  overflow: auto;
+}
+
+.notes-list {
+  display: grid;
+  align-content: start;
+  gap: 0;
+}
+
+.reader-note-section {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  padding: var(--space-4) 0;
+  background: transparent;
+}
+
+.reader-note-section:last-child {
+  border-bottom: 0;
+}
+
+.reader-note-index {
+  padding-top: 0.1rem;
+  color: var(--color-text-subtle);
+  font-size: 0.6875rem;
+  font-weight: 750;
+}
+
+.reader-note-section > div {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.reader-note-section h4,
+.reader-note-section p {
+  margin: 0;
+}
+
+.reader-note-section h4 {
+  font-size: 0.875rem;
+}
+
+.reader-note-section p {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+.reader-citation-chip {
+  display: inline-flex;
+  min-height: 1.75rem;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 22%, var(--color-border));
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-hover);
+  box-shadow: none;
+  font-size: 0.75rem;
+}
+
+.reader-citation-chip:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent-soft) 72%, var(--color-accent));
+  color: var(--color-accent-hover);
+}
+
+.reader-highlight {
+  display: grid;
+  gap: var(--space-2);
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  padding: var(--space-4) 0;
+  background: transparent;
+}
+
+.reader-highlight h4,
+.reader-highlight p {
+  margin: 0;
+}
+
+.reader-highlight p {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.reader-highlight .highlight-citation-button {
+  margin: var(--space-2) 0 0;
+  border: 0;
+  border-left: 2px solid var(--color-accent);
+  border-radius: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  box-shadow: none;
+  font-size: 0.8125rem;
+}
+
+.reader-chat {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  overflow: hidden;
+}
+
+.reader-chat .chat-thread {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  min-height: 0;
+  overflow: auto;
+  padding-right: var(--space-1);
+}
+
+.reader-chat .chat-bubble {
+  display: grid;
+  width: min(92%, 34rem);
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: var(--space-3);
+  box-shadow: none;
+}
+
+.reader-chat .chat-bubble p {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.reader-chat .chat-user {
+  justify-self: end;
+  border-color: color-mix(in srgb, var(--color-accent) 22%, var(--color-border));
+  background: var(--color-accent-soft);
+}
+
+.reader-chat .chat-assistant {
+  justify-self: start;
+  background: var(--color-surface-subtle);
+}
+
+.reader-chat .chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.reader-chat .chat-form label {
+  grid-column: 1 / -1;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.reader-chat .chat-form textarea {
+  min-height: 4.75rem;
+  max-height: 9rem;
+  resize: vertical;
+}
+
+.reader-panel-empty {
+  margin: var(--space-4);
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 1199px) {
+  .reader-grid {
+    grid-template-columns: minmax(0, 1.63fr) minmax(20rem, 1fr);
+  }
+}
+
+@media (max-width: 959px) {
+  .reader-source-forms {
+    grid-template-columns: 1fr;
+  }
+
+  .reader-source-forms > span {
+    display: none;
+  }
+
+  .reader-grid {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .reader-side-panel {
+    position: static;
+    height: 42rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .reader-workspace .ui-page-header-actions {
+    align-items: center;
+  }
+
+  .reader-source-forms form,
+  .reader-chat .chat-form {
+    grid-template-columns: 1fr;
+  }
+
+  .reader-source-forms .ui-button,
+  .reader-chat .chat-form .ui-button {
+    width: 100%;
+  }
+
+  .pdf-workspace,
+  .pdf-workspace .pdf-viewer,
+  .pdf-workspace .ui-empty-state {
+    min-height: 32rem;
+  }
+
+  .reader-side-panel {
+    height: 38rem;
+  }
+}

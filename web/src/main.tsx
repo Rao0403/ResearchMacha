@@ -9,6 +9,7 @@ import "./styles/base.css";
 import "./styles/components.css";
 import "./styles/shell.css";
 import "./styles/research.css";
+import "./styles/reader.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

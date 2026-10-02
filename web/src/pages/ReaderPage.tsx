@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 
 import { GenerationNotice } from "../components/GenerationNotice";
 import { PdfViewer } from "../components/PdfViewer";
+import { ActionButton, Alert, EmptyState, PageHeader, StatusBadge, Tabs } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
 import type { ChatMessage, Highlight, PaperDetail, PaperSummary, PaperSummaryResponse } from "../types";
@@ -316,40 +317,88 @@ export function ReaderPage() {
     pdfSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  const visibleSummary = summaryPayload?.summary ?? paper?.summary ?? null;
+  const visibleHighlights = summaryPayload?.highlights ?? paper?.highlights ?? [];
+  const readerTabs = [
+    {
+      id: "notes",
+      label: "AI Notes",
+      content: <NotesPanel summary={visibleSummary} onCitationClick={jumpToCitation} />,
+    },
+    {
+      id: "highlights",
+      label: `Highlights${visibleHighlights.length ? ` (${visibleHighlights.length})` : ""}`,
+      content: <HighlightsPanel highlights={visibleHighlights} onCitationClick={jumpToCitation} />,
+    },
+    {
+      id: "chat",
+      label: "Chat",
+      content: (
+        <ChatPanel
+          disabled={!paper}
+          messages={messages}
+          question={question}
+          sending={sending}
+          onQuestionChange={setQuestion}
+          onSubmit={handleChat}
+          onCitationClick={jumpToCitation}
+        />
+      ),
+    },
+  ];
+
   return (
-    <div className="mvp-page reader-page">
-      <section className="mvp-header reader-hero">
-        <div>
-          <p className="eyebrow">Paper reader</p>
-          <h2>Read the PDF. Follow the citations. Ask grounded questions.</h2>
+    <div className="reader-workspace">
+      <PageHeader
+        eyebrow="Paper reader"
+        title={paper?.title ?? "Read, question, and trace every claim to the PDF."}
+        description={paper
+          ? paper.authors.join(", ") || "Uploaded paper"
+          : "Upload a paper or open one from your library to generate cited notes and ask grounded questions."}
+        actions={paper ? (
+          <>
+            <span className="reader-page-indicator">Page {currentPage}</span>
+            <StatusBadge status={paper.status} />
+            {paper.status === "failed" || paper.status === "degraded" || paper.analysis_warning ? (
+              <ActionButton
+                type="button"
+                variant="secondary"
+                size="compact"
+                onClick={() => void handleRetryAnalysis()}
+                busy={retrying}
+                busyLabel="Retrying..."
+              >Retry analysis</ActionButton>
+            ) : null}
+            <a className="ui-button ui-button-secondary ui-button-compact" href={getPdfUrl(paper.id)} target="_blank" rel="noreferrer">
+              Open PDF
+            </a>
+          </>
+        ) : undefined}
+      />
+
+      <details className="reader-source-panel" open={!paper}>
+        <summary>{paper ? "Open another paper" : "Add a paper"}</summary>
+        <div className="reader-source-forms">
+          <form onSubmit={handleUpload}>
+            <label htmlFor="reader-upload">Upload a PDF</label>
+            <input id="reader-upload" name="file" type="file" accept="application/pdf" />
+            <ActionButton type="submit" busy={uploading} busyLabel="Uploading...">Upload PDF</ActionButton>
+          </form>
+          <span aria-hidden="true">or</span>
+          <form onSubmit={handleOpen}>
+            <label htmlFor="reader-paper-id">Open by paper ID</label>
+            <input
+              id="reader-paper-id"
+              value={paperIdInput}
+              onChange={(event) => setPaperIdInput(event.target.value)}
+              placeholder="Paste paper ID"
+            />
+            <ActionButton type="submit" variant="secondary">Open</ActionButton>
+          </form>
         </div>
-        {paper ? (
-          <div className="reader-hero-meta">
-            <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
-            <span>{paper.chunks.length} chunks</span>
-            <span>{paper.highlights.length} highlights</span>
-          </div>
-        ) : null}
-      </section>
+      </details>
 
-      <div className="reader-controls reader-command-bar">
-        <form onSubmit={handleUpload}>
-          <label>
-            <span>Upload a PDF</span>
-            <input name="file" type="file" accept="application/pdf" />
-          </label>
-          <button type="submit" disabled={uploading}>{uploading ? "Uploading..." : "Upload PDF"}</button>
-        </form>
-        <form onSubmit={handleOpen}>
-          <label>
-            <span>Open existing paper</span>
-            <input value={paperIdInput} onChange={(event) => setPaperIdInput(event.target.value)} placeholder="Paste paper id" />
-          </label>
-          <button type="submit">Open</button>
-        </form>
-      </div>
-
-      {message ? <p className="status-note">{message}</p> : null}
+      {message ? <Alert tone={paper && !["ready", "degraded", "failed"].includes(paper.status) ? "info" : "warning"} title="Reader status"><p>{message}</p></Alert> : null}
 
       {paper?.analysis_warning ? (
         <GenerationNotice mode={paper.analysis_mode} warnings={paper.analysis_warning} label="Paper analysis warning" />
@@ -358,64 +407,22 @@ export function ReaderPage() {
       <div className="reader-grid">
         <section className="pdf-workspace" ref={pdfSectionRef}>
           {paper ? (
-            <>
-              <div className="reader-title-row reader-document-header">
-                <div>
-                  <h3>{paper.title}</h3>
-                  <p className="authors">{paper.authors.join(", ") || "Uploaded paper"}</p>
-                </div>
-                <div className="reader-actions">
-                  <span className="status-pill">page {currentPage}</span>
-                  <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
-                  {paper.status === "failed" || paper.status === "degraded" || paper.analysis_warning ? (
-                    <button type="button" className="secondary-button" onClick={() => void handleRetryAnalysis()} disabled={retrying}>
-                      {retrying ? "Retrying..." : "Retry analysis"}
-                    </button>
-                  ) : null}
-                  <a href={getPdfUrl(paper.id)} target="_blank" rel="noreferrer">
-                    Open PDF
-                  </a>
-                </div>
-              </div>
-              <PdfViewer title={paper.title} url={getPdfUrl(paper.id)} targetPage={targetPage} onPageChange={setCurrentPage} />
-            </>
+            <PdfViewer title={paper.title} url={getPdfUrl(paper.id)} targetPage={targetPage} onPageChange={setCurrentPage} />
           ) : (
-            <div className="empty-state">
-              <p>Upload a PDF or open a saved paper id to start reading.</p>
-            </div>
+            <EmptyState
+              title="No paper open"
+              description="Upload a PDF or open a saved paper ID to start reading. Processing runs in the background and this workspace updates automatically."
+            />
           )}
         </section>
 
-        <aside className="reader-side-panel">
-          <div className="tab-row reader-tabs">
-            <button type="button" className={activeTab === "notes" ? "tab-active" : ""} onClick={() => setActiveTab("notes")}>
-              Notes
-            </button>
-            <button type="button" className={activeTab === "highlights" ? "tab-active" : ""} onClick={() => setActiveTab("highlights")}>
-              Highlights
-            </button>
-            <button type="button" className={activeTab === "chat" ? "tab-active" : ""} onClick={() => setActiveTab("chat")}>
-              Chat
-            </button>
-          </div>
-
-          {activeTab === "notes" ? (
-            <NotesPanel summary={summaryPayload?.summary ?? paper?.summary ?? null} onCitationClick={jumpToCitation} />
-          ) : null}
-          {activeTab === "highlights" ? (
-            <HighlightsPanel highlights={summaryPayload?.highlights ?? paper?.highlights ?? []} onCitationClick={jumpToCitation} />
-          ) : null}
-          {activeTab === "chat" ? (
-            <ChatPanel
-              disabled={!paper}
-              messages={messages}
-              question={question}
-              sending={sending}
-              onQuestionChange={setQuestion}
-              onSubmit={handleChat}
-              onCitationClick={jumpToCitation}
-            />
-          ) : null}
+        <aside className="reader-side-panel" aria-label="Paper notes and chat">
+          <Tabs
+            label="Paper workspace views"
+            items={readerTabs}
+            value={activeTab}
+            onValueChange={(value) => setActiveTab(value as ReaderTab)}
+          />
         </aside>
       </div>
     </div>
@@ -430,14 +437,17 @@ function NotesPanel({ summary, onCitationClick }: { summary: PaperSummary | null
   return (
     <div className="notes-list">
       <GenerationNotice mode={summary.generation_mode} warnings={summary.warning} />
-      {summaryLabels.map(([key, label]) => (
-        <section key={key}>
-          <h4>{label}</h4>
-          <p>{summary[key]}</p>
-          <div className="citation-row">
-            {(summary.section_citations[key] ?? []).map((citation, index) => (
-              <CitationButton citation={citation} key={`${key}-${index}`} onClick={onCitationClick} />
-            ))}
+      {summaryLabels.map(([key, label], sectionIndex) => (
+        <section className="reader-note-section" key={key}>
+          <span className="reader-note-index">{String(sectionIndex + 1).padStart(2, "0")}</span>
+          <div>
+            <h4>{label}</h4>
+            <p>{summary[key]}</p>
+            <div className="citation-row">
+              {(summary.section_citations[key] ?? []).map((citation, index) => (
+                <CitationButton citation={citation} key={`${key}-${index}`} onClick={onCitationClick} />
+              ))}
+            </div>
           </div>
         </section>
       ))}
@@ -453,7 +463,7 @@ function HighlightsPanel({ highlights, onCitationClick }: { highlights: Highligh
   return (
     <div className="notes-list">
       {highlights.map((highlight) => (
-        <section key={highlight.id}>
+        <section className="reader-highlight" key={highlight.id}>
           <h4>{highlight.label}</h4>
           <p>{highlight.explanation}</p>
           {highlight.citations.map((citation, index) => (
@@ -509,14 +519,16 @@ function ChatPanel({
         {!messages.length ? <p className="status-note">Ask about methods, assumptions, datasets, results, or limitations.</p> : null}
       </div>
       <form className="chat-form" onSubmit={onSubmit}>
+        <label htmlFor="reader-chat-question">Ask about this paper</label>
         <textarea
+          id="reader-chat-question"
           value={question}
           onChange={(event) => onQuestionChange(event.target.value)}
           placeholder="What should I pay attention to in the experiments?"
           rows={4}
           disabled={disabled}
         />
-        <button type="submit" disabled={disabled || sending}>{sending ? "Asking..." : "Ask"}</button>
+        <ActionButton type="submit" disabled={disabled} busy={sending} busyLabel="Asking...">Ask</ActionButton>
       </form>
     </div>
   );
@@ -526,7 +538,8 @@ function CitationButton({ citation, onClick }: { citation: { page: number; excer
   return (
     <button
       type="button"
-      className="citation-chip citation-button"
+      className="reader-citation-chip"
+      aria-label={`Jump to page ${citation.page}`}
       title={citation.excerpt ? `Jump to page ${citation.page}: ${citation.excerpt}` : `Jump to page ${citation.page}`}
       onClick={() => onClick(citation.page)}
     >
