@@ -15,7 +15,8 @@ export function App() {
   const location = useLocation();
   const isWideWorkspace = location.pathname === "/reader"
     || location.pathname.startsWith("/reader/")
-    || location.pathname.startsWith("/papers/");
+    || location.pathname.startsWith("/papers/")
+    || location.pathname === "/batch-summary";
 
   return (
     <div className="app-shell">

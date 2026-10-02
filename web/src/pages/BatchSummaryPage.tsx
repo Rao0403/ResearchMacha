@@ -2,9 +2,21 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { GenerationNotice } from "../components/GenerationNotice";
+import { ActionButton, Alert, EmptyState, Field, PageHeader, StatusBadge, Surface } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { analyzePaper, batchUploadPapers, createBatchSummary, getPaperStatus } from "../lib/api";
-import type { BatchSummaryResponse, LibraryPaper } from "../types";
+import type { BatchPaperSummary, BatchSummaryResponse, LibraryPaper } from "../types";
+
+type ComparisonKey = Exclude<keyof BatchPaperSummary, "paper_id" | "title">;
+
+const comparisonDimensions: Array<{ key: ComparisonKey; label: string }> = [
+  { key: "main_idea", label: "Main idea" },
+  { key: "problem_or_hypothesis", label: "Problem / hypothesis" },
+  { key: "experiments", label: "Experiments" },
+  { key: "models_and_datasets", label: "Models / datasets" },
+  { key: "results", label: "Results" },
+  { key: "conclusions", label: "Conclusions" },
+];
 
 export function BatchSummaryPage() {
   const [papers, setPapers] = useState<LibraryPaper[]>([]);
@@ -25,6 +37,7 @@ export function BatchSummaryPage() {
   const batchIdentity = getBatchIdentity(papers);
   const hasRunningPapers = papers.some((paper) => !["ready", "degraded", "failed"].includes(paper.status));
   const allPapersReady = papers.length > 0 && papers.every((paper) => ["ready", "degraded"].includes(paper.status));
+  const failedPaperCount = papers.filter((paper) => paper.status === "failed").length;
 
   useEffect(() => {
     return () => {
@@ -215,61 +228,69 @@ export function BatchSummaryPage() {
   }
 
   return (
-    <div className="mvp-page batch-page">
-      <section className="mvp-header batch-hero">
-        <div>
-          <p className="eyebrow">PDF batch summary</p>
-          <h2>Turn a folder of papers into a comparison table.</h2>
-          <p>Upload multiple PDFs, let the analysis jobs finish, then export a concise research matrix.</p>
-        </div>
-      </section>
+    <div className="batch-workspace">
+      <PageHeader
+        eyebrow="Compare papers"
+        title="Build a research matrix from a collection of PDFs."
+        description="Compare research questions, methods, experiments, evidence, and conclusions without losing paper identity."
+      />
 
-      <form className="batch-upload batch-console" onSubmit={handleUpload}>
-        <label>
-          <span>PDF collection</span>
-          <input name="files" type="file" accept="application/pdf" multiple />
-        </label>
-        <label>
-          <span>Summary goal</span>
-          <input value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Batch summary goal" />
-        </label>
-        <button type="submit" disabled={uploading}>{uploading ? "Uploading..." : "Upload and summarize"}</button>
-      </form>
+      <Surface className="batch-upload-panel">
+        <form className="batch-upload-form" onSubmit={handleUpload}>
+          <Field label="PDF collection" htmlFor="batch-files" hint="Choose up to 10 PDFs. The batch is created only after every file passes validation.">
+            <input id="batch-files" name="files" type="file" accept="application/pdf" multiple />
+          </Field>
+          <Field label="Comparison goal" htmlFor="batch-goal" hint="Describe what should be emphasized across every paper.">
+            <input id="batch-goal" value={goal} onChange={(event) => setGoal(event.target.value)} />
+          </Field>
+          <ActionButton type="submit" busy={uploading} busyLabel="Uploading papers...">Upload and compare</ActionButton>
+        </form>
+      </Surface>
 
-      {message ? <p className="status-note">{message}</p> : null}
-      {uploading ? <p className="status-note state-note-active">Uploading PDFs and creating analysis jobs...</p> : null}
+      {message ? <Alert tone="warning" title="Comparison status"><p>{message}</p></Alert> : null}
+      {uploading ? <Alert tone="info" title="Preparing the batch"><p>Validating PDFs and creating analysis jobs...</p></Alert> : null}
       {!papers.length && !uploading ? (
-        <section className="mvp-panel compact-empty-state">
-          <p>No batch loaded yet. Add multiple PDFs to generate a paper-by-paper comparison table.</p>
-        </section>
+        <Surface>
+          <EmptyState
+            title="No comparison loaded"
+            description="Add multiple PDFs to build a dimension-by-dimension research matrix. Each paper remains linked to its reader workspace."
+          />
+        </Surface>
       ) : null}
 
       {papers.length ? (
-        <section className="mvp-panel">
-          <div className="panel-heading">
+        <Surface className="batch-analysis-panel">
+          <div className="batch-section-heading">
             <div>
-              <p className="eyebrow">Analysis</p>
+              <p>Analysis</p>
               <h3>Uploaded papers</h3>
             </div>
-            {summarizing ? <span className="status-pill status-processing">summarizing</span> : null}
+            {summarizing ? <StatusBadge status="processing" label="Building comparison" /> : null}
           </div>
           <BatchStats papers={papers} />
-          <div className="simple-list">
+          {failedPaperCount ? (
+            <Alert tone="danger" title={`${failedPaperCount} ${failedPaperCount === 1 ? "paper needs" : "papers need"} attention`}>
+              <p>Retry failed analysis before the comparison can be generated.</p>
+            </Alert>
+          ) : null}
+          <div className="batch-paper-list">
             {papers.map((paper) => (
               <div className="batch-paper-entry" key={paper.id}>
                 <div className="paper-status-row">
                   <Link to={`/reader/${paper.id}`}>{paper.title}</Link>
                   <div className="paper-row-actions">
-                    <span className={`status-pill status-${paper.status}`}>{paper.status}</span>
+                    <StatusBadge status={paper.status} />
                     {paper.status === "failed" || paper.status === "degraded" || paper.analysis_warning ? (
-                      <button
+                      <ActionButton
                         type="button"
-                        className="secondary-button"
+                        variant="secondary"
+                        size="compact"
                         onClick={() => void retryPaperAnalysis(paper.id)}
-                        disabled={retryingIds.has(paper.id)}
+                        busy={retryingIds.has(paper.id)}
+                        busyLabel="Retrying..."
                       >
-                        {retryingIds.has(paper.id) ? "Retrying..." : "Retry"}
-                      </button>
+                        Retry
+                      </ActionButton>
                     ) : null}
                   </div>
                 </div>
@@ -279,53 +300,48 @@ export function BatchSummaryPage() {
               </div>
             ))}
           </div>
-        </section>
+        </Surface>
       ) : null}
 
       {summary ? (
-        <section className="mvp-panel">
-          <div className="panel-heading">
+        <Surface className="batch-comparison-panel">
+          <div className="batch-section-heading">
             <div>
-              <p className="eyebrow">Summary</p>
-              <h3>Comparison table</h3>
+              <p>Cross-paper synthesis</p>
+              <h3>Comparison matrix</h3>
             </div>
-            <button type="button" className="secondary-button" onClick={exportCsv}>
-              Export CSV
-            </button>
+            <ActionButton type="button" variant="secondary" size="compact" onClick={exportCsv}>Export CSV</ActionButton>
           </div>
           <GenerationNotice mode={summary.generation_mode} warnings={summary.warnings} />
-          <p className="brief-summary">{summary.overall_takeaway}</p>
-          <div className="table-wrap">
-            <table className="data-table summary-table">
+          <section className="batch-takeaway" aria-labelledby="batch-takeaway-title">
+            <h4 id="batch-takeaway-title">Overall takeaway</h4>
+            <p>{summary.overall_takeaway}</p>
+          </section>
+          <div className="batch-matrix-scroll">
+            <table className="batch-matrix" aria-label="Paper comparison matrix">
               <thead>
                 <tr>
-                  <th>Paper</th>
-                  <th>Main idea</th>
-                  <th>Problem / hypothesis</th>
-                  <th>Experiments</th>
-                  <th>Models / datasets</th>
-                  <th>Results</th>
-                  <th>Conclusions</th>
+                  <th scope="col">Dimension</th>
+                  {summary.papers.map((paper) => (
+                    <th scope="col" key={paper.paper_id}>
+                      <Link to={`/reader/${paper.paper_id}`}>{paper.title}</Link>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {summary.papers.map((paper) => (
-                  <tr key={paper.paper_id}>
-                    <td className="summary-paper-cell">
-                      <Link to={`/reader/${paper.paper_id}`}>{paper.title}</Link>
-                    </td>
-                    <td>{paper.main_idea}</td>
-                    <td>{paper.problem_or_hypothesis}</td>
-                    <td>{paper.experiments}</td>
-                    <td>{paper.models_and_datasets}</td>
-                    <td>{paper.results}</td>
-                    <td>{paper.conclusions}</td>
+                {comparisonDimensions.map((dimension) => (
+                  <tr key={dimension.key}>
+                    <th scope="row">{dimension.label}</th>
+                    {summary.papers.map((paper) => (
+                      <td key={`${dimension.key}:${paper.paper_id}`}>{paper[dimension.key]}</td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </section>
+        </Surface>
       ) : null}
     </div>
   );

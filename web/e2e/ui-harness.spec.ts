@@ -15,7 +15,7 @@ test("renders the empty primary workspaces", async ({ page }) => {
   await expect(page.getByText(/upload a pdf or open a saved paper id/i)).toBeVisible();
 
   await page.goto("/batch-summary");
-  await expect(page.getByText(/no batch loaded yet/i)).toBeVisible();
+  await expect(page.getByText(/no comparison loaded/i)).toBeVisible();
 });
 
 test("renders deterministic populated paper states", async ({ page }) => {
