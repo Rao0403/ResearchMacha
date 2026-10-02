@@ -1,0 +1,74 @@
+:root {
+  color-scheme: light;
+
+  --color-canvas: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f0f3f7;
+  --color-surface-strong: #e7ebf1;
+  --color-text: #172033;
+  --color-text-muted: #637083;
+  --color-text-subtle: #7d8898;
+  --color-border: #d9e0e8;
+  --color-border-strong: #bcc7d4;
+  --color-accent: #315bd6;
+  --color-accent-hover: #2448b8;
+  --color-accent-soft: #e9efff;
+  --color-success: #237a57;
+  --color-success-soft: #e9f6f0;
+  --color-warning: #9a5b13;
+  --color-warning-soft: #fff4df;
+  --color-danger: #b42318;
+  --color-danger-soft: #fff0ee;
+  --color-focus: #6b8cff;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  --radius-compact: 4px;
+  --radius-control: 8px;
+  --radius-surface: 12px;
+  --shadow-overlay: 0 16px 40px rgb(23 32 51 / 12%);
+
+  --font-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-research: Charter, "Iowan Old Style", Georgia, serif;
+  --content-standard: 70rem;
+  --content-wide: 90rem;
+  --sidebar-width: 14rem;
+  --control-height: 2.5rem;
+  --control-height-compact: 2.125rem;
+
+  /* Compatibility aliases used by pages that have not yet migrated. */
+  --bg: var(--color-canvas);
+  --paper: var(--color-surface);
+  --paper-warm: var(--color-surface-subtle);
+  --panel: var(--color-surface);
+  --panel-strong: var(--color-surface);
+  --surface-ink: var(--color-text);
+  --border: var(--color-border);
+  --border-strong: var(--color-border-strong);
+  --text: var(--color-text);
+  --muted: var(--color-text-muted);
+  --muted-strong: var(--color-text-muted);
+  --accent: var(--color-accent);
+  --accent-strong: var(--color-accent-hover);
+  --accent-soft: var(--color-accent-soft);
+  --teal: var(--color-success);
+  --teal-soft: var(--color-success-soft);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --danger: var(--color-danger);
+  --shadow: none;
+  --shadow-strong: var(--shadow-overlay);
+  --radius-xl: var(--radius-surface);
+  --radius-lg: var(--radius-surface);
+  --radius-md: var(--radius-control);
+  --radius-sm: var(--radius-control);
+  --font-sans: var(--font-ui);
+  --font-serif: var(--font-research);
+}

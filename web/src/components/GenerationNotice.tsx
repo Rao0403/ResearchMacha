@@ -1,4 +1,5 @@
 import type { GenerationMode, WarningMessage } from "../types";
+import { Alert, type AlertTone } from "./ui";
 
 interface GenerationNoticeProps {
   mode?: GenerationMode | null;
@@ -32,11 +33,15 @@ export function GenerationNotice({ mode, warnings, label }: GenerationNoticeProp
   }
 
   const copy = mode ? modeCopy[mode] : modeCopy.ai;
+  const tone: AlertTone = mode === "mock" || mode === "unknown_legacy" ? "danger" : "warning";
   return (
-    <aside className={`generation-notice generation-notice-${mode ?? "warning"}`} role="status">
-      <strong>{label ?? copy.title}</strong>
+    <Alert
+      className={`generation-notice generation-notice-${mode ?? "warning"}`}
+      tone={tone}
+      title={label ?? copy.title}
+    >
       {mode && mode !== "ai" ? <p>{copy.description}</p> : null}
       {messages.map((warning, index) => <p key={`${warning}-${index}`}>{warning}</p>)}
-    </aside>
+    </Alert>
   );
 }
