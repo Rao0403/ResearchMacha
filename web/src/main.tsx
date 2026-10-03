@@ -11,6 +11,7 @@ import "./styles/shell.css";
 import "./styles/research.css";
 import "./styles/reader.css";
 import "./styles/batch.css";
+import "./styles/library.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

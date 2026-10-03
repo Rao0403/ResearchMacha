@@ -1,0 +1,232 @@
+.library-workspace {
+  display: grid;
+  width: 100%;
+  max-width: var(--content-standard);
+  margin: 0 auto;
+  gap: var(--space-6);
+}
+
+.library-toolbar {
+  display: grid;
+  grid-template-columns: minmax(16rem, 1.4fr) minmax(11rem, 0.6fr) auto;
+  align-items: end;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.library-search,
+.library-filter {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.library-search span,
+.library-filter span {
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.library-search input,
+.library-filter select {
+  width: 100%;
+  min-height: var(--control-height);
+  padding: 0.55rem 0.7rem;
+}
+
+.library-result-count {
+  min-width: 7.5rem;
+  margin: 0;
+  padding-bottom: 0.55rem;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  text-align: right;
+}
+
+.library-result-count strong {
+  color: var(--color-text);
+}
+
+.library-list-surface {
+  padding-top: var(--space-4);
+  padding-bottom: var(--space-2);
+}
+
+.library-list-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: var(--space-4);
+}
+
+.library-list-heading > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.library-list-heading p,
+.library-list-heading h3,
+.library-list-heading > span {
+  margin: 0;
+}
+
+.library-list-heading p {
+  color: var(--color-accent);
+  font-size: 0.6875rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.library-list-heading h3 {
+  font-size: 1.125rem;
+}
+
+.library-list-heading > span {
+  max-width: 30rem;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  text-align: right;
+}
+
+.library-list {
+  display: grid;
+}
+
+.library-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 10rem;
+  gap: var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-4) 0;
+}
+
+.library-row:last-child {
+  border-bottom: 0;
+}
+
+.library-row-main {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.library-row-title {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.library-row-title > a {
+  min-width: 0;
+  color: var(--color-text);
+  font-family: var(--font-research);
+  font-size: 1.0625rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.library-row-title > a:hover,
+.library-open-link:hover {
+  color: var(--color-accent-hover);
+}
+
+.library-row-title .ui-status-badge {
+  flex: 0 0 auto;
+}
+
+.library-row-authors,
+.library-row-abstract,
+.library-row-warning {
+  margin: 0;
+}
+
+.library-row-authors,
+.library-row-side {
+  color: var(--color-text-subtle);
+  font-size: 0.75rem;
+}
+
+.library-row-abstract {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.library-row-warning {
+  overflow: hidden;
+  color: var(--color-warning);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-row-side {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-align: right;
+}
+
+.library-open-link {
+  margin-top: auto;
+  color: var(--color-accent);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.library-skeleton-row {
+  display: grid;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-4) 0;
+}
+
+.library-skeleton-row:last-child {
+  border-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  .library-toolbar,
+  .library-row {
+    grid-template-columns: 1fr;
+  }
+
+  .library-result-count {
+    padding: 0;
+    text-align: left;
+  }
+
+  .library-list-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .library-list-heading > span {
+    text-align: left;
+  }
+
+  .library-row {
+    gap: var(--space-3);
+  }
+
+  .library-row-side {
+    align-items: flex-start;
+    flex-direction: row;
+    flex-wrap: wrap;
+    text-align: left;
+  }
+
+  .library-open-link {
+    width: 100%;
+    margin-top: var(--space-2);
+  }
+}

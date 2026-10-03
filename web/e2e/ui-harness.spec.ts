@@ -21,7 +21,7 @@ test("renders the empty primary workspaces", async ({ page }) => {
 test("renders deterministic populated paper states", async ({ page }) => {
   await page.goto("/debug/library");
 
-  await expect(page.getByRole("heading", { name: "Saved papers" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your paper collection" })).toBeVisible();
   for (const state of ["ready", "processing", "degraded", "failed"]) {
     await expect(page.getByText(`Fixture paper: ${state}`)).toBeVisible();
   }
