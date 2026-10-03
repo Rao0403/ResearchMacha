@@ -196,3 +196,24 @@
     padding: var(--space-4);
   }
 }
+
+@media (max-width: 480px) {
+  .sidebar {
+    gap: var(--space-2);
+  }
+
+  .nav-links {
+    justify-content: flex-end;
+    gap: var(--space-1);
+  }
+
+  .nav-link {
+    min-width: var(--control-height-compact);
+    justify-content: center;
+    padding: var(--space-1);
+  }
+
+  .nav-label {
+    display: none;
+  }
+}

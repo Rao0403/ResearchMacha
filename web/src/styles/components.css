@@ -49,10 +49,23 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
   padding: 0.55rem 0.9rem;
   font-weight: 650;
   text-decoration: none;
+}
+
+.ui-button-primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+.ui-button-primary:hover {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+  color: #ffffff;
 }
 
 .ui-button-compact {

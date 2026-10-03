@@ -441,7 +441,7 @@ function NotesPanel({ summary, onCitationClick }: { summary: PaperSummary | null
         <section className="reader-note-section" key={key}>
           <span className="reader-note-index">{String(sectionIndex + 1).padStart(2, "0")}</span>
           <div>
-            <h4>{label}</h4>
+            <h2>{label}</h2>
             <p>{summary[key]}</p>
             <div className="citation-row">
               {(summary.section_citations[key] ?? []).map((citation, index) => (
@@ -464,7 +464,7 @@ function HighlightsPanel({ highlights, onCitationClick }: { highlights: Highligh
     <div className="notes-list">
       {highlights.map((highlight) => (
         <section className="reader-highlight" key={highlight.id}>
-          <h4>{highlight.label}</h4>
+          <h2>{highlight.label}</h2>
           <p>{highlight.explanation}</p>
           {highlight.citations.map((citation, index) => (
             <button
@@ -502,7 +502,7 @@ function ChatPanel({
 }) {
   return (
     <div className="reader-chat">
-      <div className="chat-thread">
+      <div className="chat-thread" aria-live="polite" aria-relevant="additions">
         {messages.map((message) => (
           <article className={`chat-bubble chat-${message.role}`} key={message.id}>
             {message.role === "assistant" ? (

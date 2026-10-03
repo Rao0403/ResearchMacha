@@ -37,13 +37,45 @@ test("renders a deterministic blocked workflow", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Exclude" })).toBeVisible();
 });
 
-test("has no critical automated accessibility violations on primary empty screens", async ({ page }) => {
-  for (const path of ["/", "/reader", "/batch-summary"]) {
+test("has no serious automated accessibility violations on primary workspaces", async ({ page }) => {
+  for (const path of ["/", "/reader", "/batch-summary", "/library"]) {
     await page.goto(path);
     const results = await new AxeBuilder({ page }).analyze();
-    const critical = results.violations.filter((violation) => violation.impact === "critical");
-    expect(critical, `${path}: ${critical.map((violation) => violation.id).join(", ")}`).toEqual([]);
+    const serious = results.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""));
+    expect(serious, `${path}: ${serious.map((violation) => violation.id).join(", ")}`).toEqual([]);
   }
+});
+
+test("keeps primary workspaces inside the viewport", async ({ page }) => {
+  for (const path of ["/", "/reader", "/batch-summary", "/library"]) {
+    await page.goto(path);
+    const dimensions = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(dimensions.scrollWidth, `${path} overflows by ${dimensions.scrollWidth - dimensions.clientWidth}px`)
+      .toBeLessThanOrEqual(dimensions.clientWidth + 1);
+  }
+});
+
+test("supports keyboard skip navigation", async ({ page }) => {
+  await page.goto("/");
+  await page.keyboard.press("Tab");
+  const skipLink = page.getByRole("link", { name: "Skip to workspace" });
+  await expect(skipLink).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#main-content")).toBeFocused();
+});
+
+test("respects reduced motion preferences", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const transitionDurationMs = await page.getByRole("button", { name: "Start research" })
+    .evaluate((element) => {
+      const value = getComputedStyle(element).transitionDuration;
+      return value.endsWith("ms") ? Number.parseFloat(value) : Number.parseFloat(value) * 1000;
+    });
+  expect(transitionDurationMs).toBeLessThanOrEqual(0.01);
 });
 
 const blockedProjectQuestion = "How should domain evidence be evaluated?";

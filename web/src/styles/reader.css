@@ -191,12 +191,12 @@
   gap: var(--space-2);
 }
 
-.reader-note-section h4,
+.reader-note-section h2,
 .reader-note-section p {
   margin: 0;
 }
 
-.reader-note-section h4 {
+.reader-note-section h2 {
   font-size: 0.875rem;
 }
 
@@ -235,9 +235,13 @@
   background: transparent;
 }
 
-.reader-highlight h4,
+.reader-highlight h2,
 .reader-highlight p {
   margin: 0;
+}
+
+.reader-highlight h2 {
+  font-size: 0.875rem;
 }
 
 .reader-highlight p {
@@ -334,7 +338,7 @@
   }
 }
 
-@media (max-width: 959px) {
+@media (max-width: 1099px) {
   .reader-source-forms {
     grid-template-columns: 1fr;
   }

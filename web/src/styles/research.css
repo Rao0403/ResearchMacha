@@ -126,13 +126,13 @@
   gap: var(--space-1);
 }
 
-.research-section-heading h3,
+.research-section-heading h2,
 .research-section-heading p,
 .research-section-kicker {
   margin: 0;
 }
 
-.research-section-heading h3 {
+.research-section-heading h2 {
   font-size: 1.125rem;
 }
 
@@ -180,7 +180,7 @@
   gap: var(--space-4);
 }
 
-.loading-workbench h3,
+.loading-workbench h2,
 .loading-workbench p {
   margin: 0;
 }
@@ -296,14 +296,14 @@
   gap: var(--space-4);
 }
 
-.candidate-card-heading h4,
+.candidate-card-heading h3,
 .candidate-card-heading p,
 .candidate-rationale,
 .candidate-abstract {
   margin: 0;
 }
 
-.candidate-card-heading h4 {
+.candidate-card-heading h3 {
   font-family: var(--font-research);
   font-size: 1.0625rem;
   line-height: 1.35;
@@ -451,7 +451,7 @@
   padding-bottom: var(--space-2);
 }
 
-.research-brief-section h4 {
+.research-brief-section h3 {
   margin: 0;
   font-size: 1rem;
 }

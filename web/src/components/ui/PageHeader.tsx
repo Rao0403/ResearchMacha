@@ -12,7 +12,7 @@ export function PageHeader({ eyebrow, title, description, actions }: PageHeaderP
     <header className="ui-page-header">
       <div className="ui-page-header-copy">
         {eyebrow ? <p className="ui-page-header-eyebrow">{eyebrow}</p> : null}
-        <h2 className="ui-page-header-title">{title}</h2>
+        <h1 className="ui-page-header-title">{title}</h1>
         {description ? <p className="ui-page-header-description">{description}</p> : null}
       </div>
       {actions ? <div className="ui-page-header-actions">{actions}</div> : null}

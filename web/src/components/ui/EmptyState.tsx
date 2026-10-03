@@ -9,7 +9,7 @@ interface EmptyStateProps {
 export function EmptyState({ title, description, actions }: EmptyStateProps) {
   return (
     <section className="ui-empty-state">
-      <h3>{title}</h3>
+      <h2>{title}</h2>
       <p>{description}</p>
       {actions ? <div className="ui-empty-state-actions">{actions}</div> : null}
     </section>

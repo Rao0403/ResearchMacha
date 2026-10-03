@@ -27,29 +27,29 @@ export function App() {
           <span className="brand-name">ResearchMacha</span>
         </NavLink>
         <nav className="nav-links" aria-label="Primary navigation">
-          <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
+          <NavLink to="/" end className={({ isActive }) => navClass(isActive)} aria-label="Research">
             <span className="nav-icon">
               <Search size={17} />
             </span>
-            <span>Research</span>
+            <span className="nav-label">Research</span>
           </NavLink>
-          <NavLink to="/reader" className={({ isActive }) => navClass(isActive)}>
+          <NavLink to="/reader" className={({ isActive }) => navClass(isActive)} aria-label="Reader">
             <span className="nav-icon">
               <BookOpen size={17} />
             </span>
-            <span>Reader</span>
+            <span className="nav-label">Reader</span>
           </NavLink>
-          <NavLink to="/batch-summary" className={({ isActive }) => navClass(isActive)}>
+          <NavLink to="/batch-summary" className={({ isActive }) => navClass(isActive)} aria-label="Compare">
             <span className="nav-icon">
               <Files size={17} />
             </span>
-            <span>Compare</span>
+            <span className="nav-label">Compare</span>
           </NavLink>
-          <NavLink to="/library" className={({ isActive }) => navClass(isActive)}>
+          <NavLink to="/library" className={({ isActive }) => navClass(isActive)} aria-label="Library">
             <span className="nav-icon">
               <Library size={17} />
             </span>
-            <span>Library</span>
+            <span className="nav-label">Library</span>
           </NavLink>
         </nav>
       </aside>

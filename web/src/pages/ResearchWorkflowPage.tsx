@@ -303,7 +303,7 @@ export function ResearchWorkflowPage() {
           <div className="research-section-heading">
             <div>
               <p className="research-section-kicker">Evidence selection</p>
-              <h3>Recommended papers</h3>
+              <h2>Recommended papers</h2>
               <p>Review relevance and remove weak matches before any PDFs are imported.</p>
             </div>
             <StatusBadge status={project.status} />
@@ -338,7 +338,7 @@ export function ResearchWorkflowPage() {
           <div className="research-section-heading">
             <div>
               <p className="research-section-kicker">Analysis</p>
-              <h3>Imported papers</h3>
+              <h2>Imported papers</h2>
             </div>
           </div>
           <div className="research-paper-list">
@@ -357,7 +357,7 @@ export function ResearchWorkflowPage() {
           <div className="research-section-heading">
             <div>
               <p className="research-section-kicker">Final brief</p>
-              <h3>Cited findings and next directions</h3>
+              <h2>Cited findings and next directions</h2>
               <p>Generated claims are separated from the exact evidence used to support them.</p>
             </div>
           </div>
@@ -384,7 +384,7 @@ function WorkflowBlockers({
       <div className="research-section-heading">
         <div>
           <p className="research-section-kicker">Action required</p>
-          <h3 id="workflow-blockers-title">Resolve failed work before synthesis</h3>
+          <h2 id="workflow-blockers-title">Resolve failed work before synthesis</h2>
           <p>Retry the failed step or exclude that source from this project.</p>
         </div>
         <StatusBadge status="blocked" label={`${blockers.length} blocked`} />
@@ -441,7 +441,7 @@ function JobWarnings({ jobs, busyItem, onRetry }: { jobs: Job[]; busyItem: strin
       <div className="research-section-heading">
         <div>
           <p className="research-section-kicker">Workflow notices</p>
-          <h3>Job warnings and recovery</h3>
+          <h2>Job warnings and recovery</h2>
         </div>
       </div>
       <div className="job-warning-list">
@@ -474,7 +474,7 @@ function AgentLoadingState() {
     <Surface className="loading-workbench" aria-live="polite">
       <div>
         <p className="research-section-kicker">Discovering evidence</p>
-        <h3>Planning searches and reviewing arXiv candidates...</h3>
+        <h2>Planning searches and reviewing arXiv candidates...</h2>
       </div>
       <div className="loading-steps" aria-label="Research workflow loading steps">
         <span>Plan search</span>
@@ -655,7 +655,7 @@ function numberValue(value: unknown) {
 function WorkflowProgress({ status, busy }: { status?: string; busy: boolean }) {
   const currentIndex = getWorkflowStepIndex(status, busy);
   return (
-    <ol className="research-progress" aria-label="Research workflow progress">
+    <ol className="research-progress" aria-label="Research workflow progress" aria-live="polite">
       {workflowSteps.map((step, index) => (
         <li className={index < currentIndex ? "done" : index === currentIndex ? "current" : ""} key={step.label}>
           <span className="research-progress-index" aria-hidden="true">{index + 1}</span>
@@ -725,7 +725,7 @@ function CandidateCards({
             <div className="candidate-card-content">
               <div className="candidate-card-heading">
                 <div>
-                  <h4>{candidate.title}</h4>
+                  <h3>{candidate.title}</h3>
                   <p>{candidate.authors.join(", ") || "Unknown authors"}{candidate.year ? ` · ${candidate.year}` : ""}</p>
                 </div>
                 <ScoreMeter score={candidate.score} />
@@ -764,7 +764,7 @@ function ResearchBriefView({ brief }: { brief: ResearchBrief }) {
         {briefSections.map(([key, label]) => (
           <section className="research-brief-section" key={key}>
             <header>
-              <h4>{label}</h4>
+              <h3>{label}</h3>
               <span>{(brief[key] as ResearchFinding[]).length}</span>
             </header>
             {(brief[key] as ResearchFinding[]).length ? (brief[key] as ResearchFinding[]).map((finding, index) => (

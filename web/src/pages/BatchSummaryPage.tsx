@@ -263,7 +263,7 @@ export function BatchSummaryPage() {
           <div className="batch-section-heading">
             <div>
               <p>Analysis</p>
-              <h3>Uploaded papers</h3>
+              <h2>Uploaded papers</h2>
             </div>
             {summarizing ? <StatusBadge status="processing" label="Building comparison" /> : null}
           </div>
@@ -308,13 +308,13 @@ export function BatchSummaryPage() {
           <div className="batch-section-heading">
             <div>
               <p>Cross-paper synthesis</p>
-              <h3>Comparison matrix</h3>
+              <h2>Comparison matrix</h2>
             </div>
             <ActionButton type="button" variant="secondary" size="compact" onClick={exportCsv}>Export CSV</ActionButton>
           </div>
           <GenerationNotice mode={summary.generation_mode} warnings={summary.warnings} />
           <section className="batch-takeaway" aria-labelledby="batch-takeaway-title">
-            <h4 id="batch-takeaway-title">Overall takeaway</h4>
+            <h3 id="batch-takeaway-title">Overall takeaway</h3>
             <p>{summary.overall_takeaway}</p>
           </section>
           <div className="batch-matrix-scroll">
@@ -356,7 +356,7 @@ function BatchStats({ papers }: { papers: LibraryPaper[] }) {
   const failed = papers.filter((paper) => paper.status === "failed").length;
   const running = papers.length - ready - failed;
   return (
-    <div className="batch-stats">
+    <div className="batch-stats" aria-live="polite">
       <span>
         <strong>{papers.length}</strong>
         uploaded

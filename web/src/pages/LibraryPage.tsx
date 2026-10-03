@@ -134,7 +134,7 @@ export function LibraryPage() {
           <div className="library-list-heading">
             <div>
               <p>Saved evidence</p>
-              <h3>Recently updated</h3>
+              <h2>Recently updated</h2>
             </div>
             <span>Open a paper to continue reading, review notes, or ask a question.</span>
           </div>

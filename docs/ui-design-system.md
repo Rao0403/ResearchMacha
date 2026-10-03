@@ -117,15 +117,17 @@ Color must never be the only status signal. Every state includes a text label an
 - Comparison content: maximum 1440px.
 - Reader: full available width with 24px outer gutters.
 - Desktop reader split at 1200px and above: 68% PDF / 32% side panel.
-- Reader split from 960px through 1199px: 62% PDF / 38% side panel.
-- Below 960px: PDF first, side panel second.
+- Reader split from 1100px through 1199px: 62% PDF / 38% side panel.
+- Below 1100px: PDF first, side panel second so the document never becomes a narrow preview beside the desktop navigation.
 - Page gutters: 32px desktop, 24px compact laptop, 16px mobile.
 
 ### Responsive breakpoints
 
 - `1200px`: wide reader and comparison layout.
-- `960px`: stacked reader and compact navigation threshold.
+- `1100px`: stacked reader threshold.
+- `960px`: compact navigation threshold.
 - `720px`: mobile navigation and single-column forms.
+- `480px`: icon-only primary navigation with accessible labels.
 
 Primary verification viewports are 1440x900, 1280x800, 1024x768, and 390x844.
 

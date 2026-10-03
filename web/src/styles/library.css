@@ -67,7 +67,7 @@
 }
 
 .library-list-heading p,
-.library-list-heading h3,
+.library-list-heading h2,
 .library-list-heading > span {
   margin: 0;
 }
@@ -80,7 +80,7 @@
   text-transform: uppercase;
 }
 
-.library-list-heading h3 {
+.library-list-heading h2 {
   font-size: 1.125rem;
 }
 
