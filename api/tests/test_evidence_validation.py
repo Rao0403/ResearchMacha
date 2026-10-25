@@ -126,8 +126,74 @@ def test_summary_draft_rejects_unknown_chunk_ids() -> None:
         ai.validate_summary_draft(output, evidence_registry())
 
 
+@pytest.mark.parametrize("value", ["chunk_id=5c0973e3-ae8e-4fc8-929a-32ecae4b3b20", "chunk-5c0973e3-ae8e-4fc8-929a-32ecae4b3b20"])
+def test_observed_chunk_prefixes_resolve_only_to_exact_supplied_evidence(value) -> None:
+    chunk_id = "5c0973e3-ae8e-4fc8-929a-32ecae4b3b20"
+    registry = EvidenceRegistry.from_chunks([{"id": chunk_id, "page_start": 2, "text": "Real evidence."}])
+    output = ai.ChatDraft(answer="Grounded", chunk_ids=[value])
+
+    ai.validate_chat_draft(output, registry)
+
+    assert output.chunk_ids == [chunk_id]
+    with pytest.raises(EvidenceValidationError, match="unknown chunk IDs"):
+        ai.resolve_chunk_ids([value + "-invented"], registry, "Summary")
+
+
+def test_exact_prefixed_chunk_id_is_never_reassigned() -> None:
+    registry = EvidenceRegistry.from_chunks([
+        {"id": "chunk-1", "page_start": 1, "text": "First source."},
+        {"id": "1", "page_start": 2, "text": "Second source."},
+    ])
+
+    assert ai.resolve_chunk_ids(["chunk-1"], registry, "Summary") == ["chunk-1"]
+
+
+def test_brief_citations_are_hydrated_from_the_supplied_paper(monkeypatch) -> None:
+    contexts = [
+        {"paper_id": "p1", "title": "First", "summary": "S", "chunks": [
+            {"id": "c1", "page_start": 2, "text": "First paper reports 80 percent."}
+        ]},
+        {"paper_id": "p2", "title": "Second", "summary": "S", "chunks": [
+            {"id": "c2", "page_start": 5, "text": "Second paper reports 90 percent."}
+        ]},
+    ]
+    draft = ai.ResearchBriefDraft(
+        executive_summary="Different evaluations; no controlled comparison established.",
+        key_findings=[],
+        evidence_table=[
+            ai.BriefFindingDraft(label="First", summary="First evaluation", chunk_ids=["chunk_id=e1"]),
+            ai.BriefFindingDraft(label="Second", summary="Second evaluation", chunk_ids=["chunk-e2"]),
+        ],
+        conflicts_or_gaps=[], suggested_experiments=[], suggested_research_directions=[],
+    )
+
+    def fake_invoke(model, output_model, task, template, payload, validator):
+        assert output_model is ai.ResearchBriefDraft
+        validator(draft)
+        return draft
+
+    monkeypatch.setattr(ai, "invoke_structured_json", fake_invoke)
+    provider = object.__new__(ai.LangChainProvider)
+    provider.chat_model = object()
+
+    brief = provider.synthesize_collection("Compare", contexts)
+
+    citations = [finding.citations[0] for finding in brief.evidence_table]
+    assert [(c.paper_id, c.title, c.page, c.chunk_id) for c in citations] == [
+        ("p1", "First", 2, "c1"), ("p2", "Second", 5, "c2"),
+    ]
+    ai.validate_brief_evidence(brief, EvidenceRegistry.from_paper_contexts(contexts))
+    assert brief.suggested_experiments == []
+    draft.evidence_table.pop()
+    with pytest.raises(EvidenceValidationError, match="every supplied paper"):
+        ai.validate_brief_draft(draft, EvidenceRegistry.from_paper_contexts([
+            {**context, "chunks": [{**context["chunks"][0], "id": f"e{index}"}]}
+            for index, context in enumerate(contexts, start=1)
+        ]))
+
+
 def test_summary_draft_is_hydrated_with_deterministic_citations(monkeypatch) -> None:
-    section = ai.SummarySectionDraft(text="Grounded", chunk_ids=["chunk-1", "chunk-1"])
+    section = ai.SummarySectionDraft(text="Grounded", chunk_ids=["e1", "e1"])
     output = ai.PaperSummaryDraft(
         problem_or_hypothesis=section,
         approach=section,
@@ -135,9 +201,15 @@ def test_summary_draft_is_hydrated_with_deterministic_citations(monkeypatch) -> 
         results=section,
         conclusion=section,
         limitations_or_notes=section,
-        highlights=[ai.SummaryHighlightDraft(label="Result", explanation="Grounded", chunk_ids=["chunk-1"])],
+        highlights=[ai.SummaryHighlightDraft(label="Result", explanation="Grounded", chunk_ids=["e1"])],
     )
-    monkeypatch.setattr(ai, "invoke_structured_json", lambda *args, **kwargs: output)
+    def fake_invoke(model, output_model, task, template, payload, validator):
+        assert "chunk_id=e1" in payload["context"]
+        assert "chunk_id=chunk-1" not in payload["context"]
+        validator(output)
+        return output
+
+    monkeypatch.setattr(ai, "invoke_structured_json", fake_invoke)
     provider = object.__new__(ai.LangChainProvider)
     provider.chat_model = object()
     chunks = [
@@ -274,7 +346,7 @@ def test_structured_invocation_repairs_once_after_domain_validation_failure(monk
     calls = []
 
     def fake_invoke(*args, **kwargs):
-        calls.append(1)
+        calls.append(args[2])
         return outputs.pop(0)
 
     monkeypatch.setattr(ai, "invoke_structured_once", fake_invoke)
@@ -291,6 +363,30 @@ def test_structured_invocation_repairs_once_after_domain_validation_failure(monk
 
     assert result.search_queries == ["valid"]
     assert len(calls) == 2
+    assert "Validation error from the previous attempt" in calls[1]
+    assert "repair" in calls[1]
+
+
+def test_ollama_prompted_json_disables_internal_streaming(monkeypatch) -> None:
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+
+    options = []
+
+    def respond(prompt, **kwargs):
+        options.append(kwargs)
+        return AIMessage(content='{"search_queries":["q"],"inclusion_criteria":["evidence"]}')
+
+    model = RunnableLambda(respond)
+    monkeypatch.setattr(ai, "ChatOllama", type(model))
+
+    result = ai.invoke_structured_once(
+        model, ResearchPlan, "Plan", "Question: {question}", {"question": "Q"},
+        structured_method="prompted_json",
+    )
+
+    assert result.search_queries == ["q"]
+    assert options == [{"stream": False}]
 
 
 def test_structured_invocation_stops_after_two_invalid_attempts(monkeypatch) -> None:
@@ -333,6 +429,27 @@ def test_structured_invocation_does_not_retry_provider_timeout(monkeypatch) -> N
         )
 
     assert len(calls) == 1
+
+
+def test_generation_schema_and_example_only_offer_current_evidence(monkeypatch) -> None:
+    import json
+
+    prompts = []
+
+    def fake_invoke(model, output_model, system_prompt, *args, **kwargs):
+        prompts.append(system_prompt)
+        return ai.ChatDraft(answer="Grounded", chunk_ids=["e1"])
+
+    monkeypatch.setattr(ai, "invoke_structured_once", fake_invoke)
+    ai.invoke_structured_json(
+        object(), ai.ChatDraft, "Answer", "Question: {question}",
+        {"question": "Q", "evidence_ids": ["e1"]},
+    )
+
+    schema_text = prompts[0].split("JSON schema:\n", 1)[1].split("\n\nExample valid JSON:", 1)[0]
+    example_text = prompts[0].split("Example valid JSON:\n", 1)[1]
+    assert json.loads(schema_text)["properties"]["chunk_ids"]["items"]["enum"] == ["e1"]
+    assert json.loads(example_text)["chunk_ids"] == ["e1"]
 
 
 def test_ollama_clients_have_bounded_requests_and_low_reasoning(monkeypatch) -> None:

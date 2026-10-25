@@ -38,7 +38,7 @@ from app.services.agent_trace import (
     start_agent_step,
     summarize_candidates_for_trace,
 )
-from app.services.analysis import enqueue_analysis_job, now
+from app.services.analysis import begin_job_phase, enqueue_analysis_job, finish_job_phase, now
 from app.services.arxiv import ArxivEntry, fetch_arxiv_entry, search_arxiv
 from app.services.fallbacks import record_fallback
 from app.services.memory import create_memory, latest_memories, memory_payload, retrieve_memories
@@ -781,10 +781,14 @@ def process_synthesis_job(
         project.status = "synthesizing"
         db.add(project)
         db.commit()
+        begin_job_phase(db, job, "retrieving_evidence")
         if heartbeat:
             heartbeat()
         try:
-            synthesize_project(db, project.id, expected_generation=job.requested_generation)
+            synthesize_project(
+                db, project.id, expected_generation=job.requested_generation,
+                on_phase=lambda phase: begin_job_phase(db, job, phase),
+            )
         except StaleSynthesisJob as exc:
             db.rollback()
             job = db.get(Job, job_id)
@@ -808,6 +812,7 @@ def process_synthesis_job(
             )
             job.finished_at = now()
             job.lease_expires_at = None
+            finish_job_phase(job, str(job.status))
             db.add(job)
             db.commit()
     finally:
@@ -905,6 +910,7 @@ def synthesize_project(
     agent_run: AgentRun | None = None,
     *,
     expected_generation: int | None = None,
+    on_phase: Callable[[str], None] | None = None,
 ) -> ResearchProject:
     project = get_project_or_404(db, project_id)
     if expected_generation is not None and project.synthesis_generation != expected_generation:
@@ -916,6 +922,8 @@ def synthesize_project(
     if not contexts:
         raise HTTPException(status_code=400, detail="No analyzed paper evidence is available for synthesis")
 
+    if on_phase:
+        on_phase("retrieving_memories")
     memory_signals = retrieve_memories(db, project.question, limit=8)
     memory_payloads = [memory_payload(memory) for memory in memory_signals]
     step = start_agent_step(
@@ -929,6 +937,8 @@ def synthesize_project(
             "memory_count": len(memory_payloads),
         },
     )
+    if on_phase:
+        on_phase("generating_brief")
     try:
         brief = get_ai_provider().synthesize_collection(project.question, contexts, memory_payloads)
         ensure_cited_brief(brief)
@@ -943,6 +953,8 @@ def synthesize_project(
         )
         brief = build_extractive_brief(project.question, contexts, warning)
         validate_brief_evidence(brief, EvidenceRegistry.from_paper_contexts(contexts))
+    if on_phase:
+        on_phase("persisting_brief")
     project = db.execute(
         select(ResearchProject).where(ResearchProject.id == project_id).with_for_update()
     ).scalar_one()

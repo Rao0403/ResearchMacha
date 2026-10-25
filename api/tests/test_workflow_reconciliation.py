@@ -228,6 +228,52 @@ def test_stale_synthesis_generation_cannot_overwrite_brief(tmp_path, monkeypatch
     engine.dispose()
 
 
+def test_synthesis_timeout_finishes_with_cited_fallback_and_phase_history(tmp_path, monkeypatch) -> None:
+    from app.ai import AIProviderError
+    from app.services.jobs import claim_next_job, dispatch_job, recover_interrupted_jobs
+
+    class TimeoutProvider:
+        def synthesize_collection(self, *args):
+            raise AIProviderError("Structured generation timed out; repair attempt skipped.")
+
+    engine, factory = workflow_database(tmp_path)
+    project_id, paper_ids = seed_ready_project(factory, paper_count=2)
+    contexts = [
+        {
+            "paper_id": paper_id, "title": f"Paper {index}", "summary": "Reported evaluation.",
+            "chunks": [{"id": f"chunk-{index}", "page_start": index + 1, "text": "Reported evaluation evidence."}],
+        }
+        for index, paper_id in enumerate(paper_ids)
+    ]
+    monkeypatch.setattr(research, "build_paper_contexts", lambda project: contexts)
+    monkeypatch.setattr(research, "retrieve_memories", lambda *args, **kwargs: [])
+    monkeypatch.setattr(research, "get_ai_provider", lambda: TimeoutProvider())
+    with factory() as db:
+        research.reconcile_project(db, project_id)
+        job = db.query(Job).filter(Job.project_id == project_id, Job.job_type == "synthesis").one()
+        job_id = job.id
+
+    assert claim_next_job(factory, worker_id="old-worker") == job_id
+    assert recover_interrupted_jobs(factory, worker_id="new-worker", all_previous_workers=True) == (1, 0)
+    assert claim_next_job(factory, worker_id="new-worker") == job_id
+    dispatch_job(job_id, worker_id="new-worker", session_factory=factory)
+
+    with factory() as db:
+        job = db.get(Job, job_id)
+        project = db.get(ResearchProject, project_id)
+        assert job.status == JobStatus.COMPLETED_WITH_WARNINGS
+        assert job.attempt_count == 2
+        assert job.finished_at is not None
+        assert project.status == "degraded"
+        assert project.synthesis_json["generation_mode"] == "extractive"
+        assert len(project.synthesis_json["evidence_table"]) == 2
+        assert [entry["phase"] for entry in job.payload["phase_history"]] == [
+            "retrieving_evidence", "retrieving_memories", "generating_brief", "persisting_brief",
+        ]
+        assert job.payload["phase"] == "completed_with_warnings"
+    engine.dispose()
+
+
 class FakeSynthesisProvider:
     def __init__(self, brief: ResearchBrief) -> None:
         self.brief = brief

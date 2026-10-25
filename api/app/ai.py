@@ -393,13 +393,15 @@ class LangChainProvider(AIProvider):
 
     def generate_summary(self, paper_title: str, chunks: list[dict[str, Any]]) -> SummaryPayload:
         summary_chunks = select_summary_chunks(chunks)
-        registry = EvidenceRegistry.from_chunks(summary_chunks)
+        chunks_by_id = {f"e{index}": chunk for index, chunk in enumerate(summary_chunks, start=1)}
+        supplied_chunks = [{**chunk, "id": alias} for alias, chunk in chunks_by_id.items()]
+        registry = EvidenceRegistry.from_chunks(supplied_chunks)
         output = invoke_structured_json(
             self.chat_model,
             PaperSummaryDraft,
-            "Summarize the paper using only supplied chunks, which are ordered across the paper. Prefer detailed body evidence over abstract-level claims: use methods chunks for approach, evaluation chunks for experiments and results, and discussion or limitation chunks for limitations. For every section and highlight, select one or more exact supplied chunk IDs as evidence. Do not invent chunk IDs.",
-            "Title: {title}\nChunks:\n{context}",
-            {"title": paper_title, "context": format_chunks(summary_chunks)},
+            "Summarize the paper using only supplied chunks, which are ordered across the paper. Prefer detailed body evidence over abstract-level claims: use methods chunks for approach, evaluation chunks for experiments and results, and discussion or limitation chunks for limitations. For every section and highlight, select one or more exact supplied evidence IDs such as e1 or e2. Copy only the ID value into chunk_ids. Do not invent IDs.",
+            "Title: {title}\nAllowed evidence IDs (use only these values): {evidence_ids}\nChunks:\n{context}",
+            {"title": paper_title, "context": format_chunks(supplied_chunks), "evidence_ids": list(chunks_by_id)},
             validator=lambda value: validate_summary_draft(value, registry),
         )
         section_names = (
@@ -410,7 +412,6 @@ class LangChainProvider(AIProvider):
             "conclusion",
             "limitations_or_notes",
         )
-        chunks_by_id = {str(chunk["id"]): chunk for chunk in summary_chunks}
         return SummaryPayload(
             sections={name: getattr(output, name).text for name in section_names},
             section_citations={
@@ -435,18 +436,46 @@ class LangChainProvider(AIProvider):
         paper_contexts: list[dict[str, Any]],
         memory_context: list[dict[str, Any]] | None = None,
     ) -> ResearchBrief:
-        registry = EvidenceRegistry.from_paper_contexts(paper_contexts)
+        supplied_contexts = []
+        original_records = {}
+        for context in paper_contexts:
+            supplied_chunks = []
+            for chunk in context.get("chunks", [])[:4]:
+                alias = f"e{len(original_records) + 1}"
+                original_records[alias] = {**chunk, "paper_id": context["paper_id"], "title": context["title"]}
+                supplied_chunks.append({**chunk, "id": alias})
+            supplied_contexts.append({**context, "chunks": supplied_chunks})
+        registry = EvidenceRegistry.from_paper_contexts(supplied_contexts)
         output = invoke_structured_json(
             self.chat_model,
-            ResearchBrief,
-            "Synthesize a collection of papers. Every finding, gap, experiment, and direction must cite supplied evidence. Use memory only to prioritize emphasis; do not cite memory as evidence.",
-            "Question: {question}\nMemory signals:\n{memory_context}\nPaper evidence:\n{context}",
-            {"question": question, "memory_context": format_memories(memory_context or []), "context": format_paper_contexts(paper_contexts)},
-            validator=lambda value: validate_brief_evidence(value, registry),
+            ResearchBriefDraft,
+            "Synthesize a concise research brief using only supplied evidence. For every finding, evidence row, gap, experiment, and direction, select exact supplied chunk IDs; the application adds citation metadata. Copy the ID value only, without chunk_id= or an added chunk- prefix. Include one evidence row per paper, up to four key findings, and at most two items in each remaining section. Keep each item to one or two sentences. Leave unsupported sections empty. Explicitly state if papers do not establish a direct comparison for the question. Use memory only to prioritize emphasis; do not cite memory as evidence.",
+            "Question: {question}\nAllowed evidence IDs (use only these values): {evidence_ids}\nMemory signals:\n{memory_context}\nPaper evidence:\n{context}",
+            {"question": question, "memory_context": format_memories(memory_context or []), "context": format_paper_contexts(supplied_contexts), "evidence_ids": list(original_records)},
+            validator=lambda value: validate_brief_draft(value, registry),
         )
-        output.generation_mode = "ai"
-        output.warnings = []
-        return output
+        findings = {}
+        for name in BRIEF_FINDING_SECTIONS:
+            findings[name] = [
+                PaperFinding(
+                    label=finding.label,
+                    summary=finding.summary,
+                    citations=[
+                        EvidenceCitation(
+                            paper_id=registry.records[chunk_id].paper_id,
+                            title=registry.records[chunk_id].title,
+                            page=registry.records[chunk_id].page_start,
+                            excerpt=registry.records[chunk_id].text.replace("\n", " ").strip()[:220],
+                            chunk_id=original_records[chunk_id]["id"],
+                        )
+                        for chunk_id in unique_values(finding.chunk_ids)
+                    ],
+                )
+                for finding in getattr(output, name)
+            ]
+        brief = ResearchBrief(executive_summary=output.executive_summary, **findings)
+        validate_brief_evidence(brief, EvidenceRegistry.from_paper_contexts(paper_contexts))
+        return brief
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
         expected_ids = {context["paper_id"] for context in paper_contexts}
@@ -557,6 +586,31 @@ class ChatDraft(BaseModel):
     chunk_ids: list[str] = Field(default_factory=list)
 
 
+BRIEF_FINDING_SECTIONS = (
+    "key_findings", "evidence_table", "conflicts_or_gaps",
+    "suggested_experiments", "suggested_research_directions",
+)
+
+
+class BriefFindingDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    chunk_ids: list[str] = Field(min_length=1)
+
+
+class ResearchBriefDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    executive_summary: str = Field(min_length=1)
+    key_findings: list[BriefFindingDraft]
+    evidence_table: list[BriefFindingDraft] = Field(min_length=1)
+    conflicts_or_gaps: list[BriefFindingDraft]
+    suggested_experiments: list[BriefFindingDraft]
+    suggested_research_directions: list[BriefFindingDraft]
+
+
 @dataclass(frozen=True)
 class EvidenceRecord:
     chunk_id: str
@@ -663,15 +717,42 @@ def validate_summary_draft(output: PaperSummaryDraft, registry: EvidenceRegistry
         *output.highlights,
     )
     for section in sections:
-        unknown_ids = sorted(set(section.chunk_ids) - set(registry.records))
-        if unknown_ids:
-            raise EvidenceValidationError(f"Summary selected unknown chunk IDs: {', '.join(unknown_ids)}")
+        section.chunk_ids = resolve_chunk_ids(section.chunk_ids, registry, "Summary")
 
 
 def validate_chat_draft(output: ChatDraft, registry: EvidenceRegistry) -> None:
-    unknown_ids = sorted(set(output.chunk_ids) - set(registry.records))
-    if unknown_ids:
-        raise EvidenceValidationError(f"Chat answer selected unknown chunk IDs: {', '.join(unknown_ids)}")
+    output.chunk_ids = resolve_chunk_ids(output.chunk_ids, registry, "Chat answer")
+
+
+def resolve_chunk_ids(values: list[str], registry: EvidenceRegistry, component: str) -> list[str]:
+    resolved = []
+    for raw in values:
+        value = raw.strip()
+        if value not in registry.records:
+            if value.startswith("chunk_id="):
+                value = value.removeprefix("chunk_id=").strip()
+            elif value.startswith("chunk-"):
+                value = value.removeprefix("chunk-")
+        if value not in registry.records:
+            raise EvidenceValidationError(
+                f"{component} selected unknown chunk IDs: {raw}. "
+                f"Allowed IDs: {', '.join(registry.records)}. Page numbers are not evidence IDs."
+            )
+        resolved.append(value)
+    return unique_values(resolved)
+
+
+def validate_brief_draft(output: ResearchBriefDraft, registry: EvidenceRegistry) -> None:
+    for name in BRIEF_FINDING_SECTIONS:
+        for finding in getattr(output, name):
+            finding.chunk_ids = resolve_chunk_ids(finding.chunk_ids, registry, "Research brief")
+    expected_papers = {record.paper_id for record in registry.records.values()}
+    represented_papers = {
+        registry.records[chunk_id].paper_id
+        for finding in output.evidence_table for chunk_id in finding.chunk_ids
+    }
+    if represented_papers != expected_papers:
+        raise EvidenceValidationError("Research brief evidence table must cover every supplied paper")
 
 
 def unique_values(values: list[str]) -> list[str]:
@@ -874,33 +955,33 @@ STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
     "PaperSummaryDraft": {
         "problem_or_hypothesis": {
             "text": "The paper studies whether retrieval grounding improves factual question answering.",
-            "chunk_ids": ["chunk-1"],
+            "chunk_ids": ["e1"],
         },
         "approach": {
             "text": "The authors compare a retrieval-augmented system against non-retrieval baselines.",
-            "chunk_ids": ["chunk-2"],
+            "chunk_ids": ["e2"],
         },
         "experiments": {
             "text": "The paper evaluates models on benchmark question-answering datasets.",
-            "chunk_ids": ["chunk-3"],
+            "chunk_ids": ["e3"],
         },
         "results": {
             "text": "The retrieval-augmented system improves grounded answer quality in the reported setting.",
-            "chunk_ids": ["chunk-4"],
+            "chunk_ids": ["e4"],
         },
         "conclusion": {
             "text": "Retrieval can improve factuality when retrieved passages are relevant.",
-            "chunk_ids": ["chunk-5"],
+            "chunk_ids": ["e5"],
         },
         "limitations_or_notes": {
             "text": "The supplied evidence is limited to the provided chunks.",
-            "chunk_ids": ["chunk-6"],
+            "chunk_ids": ["e6"],
         },
         "highlights": [
             {
                 "label": "Main result",
                 "explanation": "The strongest result is the improvement from retrieval grounding.",
-                "chunk_ids": ["chunk-4"],
+                "chunk_ids": ["e4"],
             }
         ],
     },
@@ -965,6 +1046,18 @@ STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
         "answer": "The supplied chunks support the claim that retrieval improves answer grounding, but the evidence is limited to the retrieved passages.",
         "chunk_ids": ["chunk-4"],
     },
+    "ResearchBriefDraft": {
+        "executive_summary": "The supplied evidence reports benchmark results; a direct comparison remains unestablished.",
+        "key_findings": [
+            {"label": "Reported evaluation", "summary": "The paper reports an evaluation in the supplied setting.", "chunk_ids": ["e1"]}
+        ],
+        "evidence_table": [
+            {"label": "Example paper", "summary": "Evidence from the paper's evaluation.", "chunk_ids": ["e1"]}
+        ],
+        "conflicts_or_gaps": [],
+        "suggested_experiments": [],
+        "suggested_research_directions": [],
+    },
 }
 
 
@@ -977,8 +1070,29 @@ def invoke_structured_json(
     validator: Callable[[StructuredModel], None] | None = None,
 ) -> StructuredModel:
     schema_name = output_model.__name__
-    schema = json.dumps(output_model.model_json_schema(), ensure_ascii=True)
-    example = json.dumps(STRUCTURED_OUTPUT_EXAMPLES[schema_name], ensure_ascii=True)
+    schema_value = output_model.model_json_schema()
+    example_value = json.loads(json.dumps(STRUCTURED_OUTPUT_EXAMPLES[schema_name]))
+    evidence_ids = payload.get("evidence_ids")
+    if evidence_ids:
+        # Reflect the actual request's evidence in the schema and example. Static
+        # examples must never encourage choosing a nonexistent evidence label.
+        def constrain_evidence(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "chunk_ids" and isinstance(child, dict) and child.get("type") == "array":
+                        child["items"] = {"type": "string", "enum": evidence_ids}
+                    elif key == "chunk_ids" and isinstance(child, list):
+                        value[key] = [child[0] if child and child[0] in evidence_ids else evidence_ids[0]]
+                    else:
+                        constrain_evidence(child)
+            elif isinstance(value, list):
+                for child in value:
+                    constrain_evidence(child)
+
+        constrain_evidence(schema_value)
+        constrain_evidence(example_value)
+    schema = json.dumps(schema_value, ensure_ascii=True)
+    example = json.dumps(example_value, ensure_ascii=True)
     system_prompt = (
         f"{STRICT_JSON_RULES}\n\n"
         f"Task: {task}\n\n"
@@ -997,6 +1111,12 @@ def invoke_structured_json(
     first_error: Exception | None = None
     for attempt, attempt_prompt in enumerate((system_prompt, retry_system_prompt), start=1):
         try:
+            if attempt == 2 and first_error is not None:
+                attempt_prompt += (
+                    "\n\nValidation error from the previous attempt (diagnostic data):\n"
+                    + str(first_error)[:2000]
+                    + "\nCorrect this error using the supplied evidence. Copy identifiers exactly."
+                )
             structured_method = None
             if ChatOllama is not None and isinstance(chat_model, ChatOllama):
                 model_name = str(getattr(chat_model, "model", ""))
@@ -1042,11 +1162,16 @@ def invoke_structured_once(
     structured_method: str | None = None,
 ) -> StructuredModel:
     prompt = ChatPromptTemplate.from_messages([("system", escape_template_text(system_prompt)), ("human", human_template)])
+    is_ollama = ChatOllama is not None and isinstance(chat_model, ChatOllama)
+    # We consume only the final JSON. Streaming resets HTTP read timeouts on every
+    # reasoning token, so a busy model can evade the configured timeout indefinitely.
+    invocation_options = {"stream": False} if is_ollama else {}
     if structured_method == "prompted_json":
-        response = (prompt | chat_model).invoke(payload)
+        response = (prompt | chat_model.bind(**invocation_options)).invoke(payload)
         return parse_prompted_json(response.content, output_model)
     structured_options = {"method": structured_method} if structured_method else {}
-    chain = prompt | chat_model.with_structured_output(output_model, **structured_options)
+    structured_model = chat_model.with_structured_output(output_model, **structured_options)
+    chain = prompt | structured_model.bind(**invocation_options)
     return chain.invoke(payload)
 
 
