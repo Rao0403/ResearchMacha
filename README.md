@@ -147,6 +147,7 @@ This makes the agent behavior inspectable in the UI and queryable in MySQL.
 
 ## Documentation
 
+- [Product specification](docs/product-spec.md): intended researcher experience, feature requirements, and completion criteria.
 - [Showcase](docs/showcase.md): portfolio explanation of agentic RAG, tool use, memory, and vector retrieval.
 - [Architecture](docs/architecture.md): system architecture and data flow.
 - [Walkthrough](docs/walkthrough.md): demo script and visual assets.
