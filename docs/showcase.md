@@ -25,7 +25,7 @@ FastAPI service
   |
   +--> arXiv discovery
   +--> PDF import and extraction
-  +--> LangChain model chains
+  +--> OpenAI structured generation and embeddings
   +--> MySQL source of truth
   +--> Qdrant vector retrieval
 ```
@@ -68,15 +68,16 @@ Memory is deliberately simple:
 
 MySQL is the durable source of truth for memory. Qdrant is the semantic index. If Qdrant fails, the app falls back to MySQL JSON embedding search.
 
-## Why LangChain
+## Model layer
 
-LangChain is used for the model-facing layer:
+The native OpenAI SDK is used behind the application's `AIProvider` interface:
 
 - prompt templates;
 - structured JSON outputs;
-- Ollama/OpenAI adapters;
-- chain invocation;
-- retry/repair around schema parsing.
+- Responses API with `gpt-6-luna`, reasoning `none`;
+- `text-embedding-3-small` embedding batches;
+- at most one repair/retry for schema/evidence validation or rate limiting;
+- actual token usage logging and explicit provider error categories.
 
 The orchestration remains in normal Python services. That keeps the system explainable enough for a portfolio walkthrough.
 
@@ -86,13 +87,14 @@ The orchestration remains in normal Python services. That keeps the system expla
 - Grounded RAG over PDFs with page-level citations.
 - Qdrant vector retrieval with MySQL fallback.
 - Memory that affects future selection/synthesis without becoming opaque.
-- Local-first model support through Ollama, with OpenAI-compatible adapter available.
+- Local application state and PDF storage, with cloud generation/embeddings through OpenAI.
 - Production-minded reader UI with PDF.js, citation jump-to-page, retries, and CSV export.
 
 ## Known Boundaries
 
 - Discovery is arXiv-only.
 - PDFs must be born-digital; OCR is intentionally out of scope.
-- Background work runs in-process through FastAPI background tasks.
+- A MySQL-leased worker runs inside one FastAPI process; pending work survives restarts.
 - There is no multi-user auth in the MVP.
 - The memory layer is useful after repeated workflows, not on a first cold run.
+- Live OpenAI quality and latency require user testing; offline fixtures demonstrate contracts rather than measured model capability.

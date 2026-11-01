@@ -24,7 +24,7 @@ Recommended filenames for captured media:
 
 The backend includes a small seed script for creating a demo research project with known arXiv candidates.
 
-Run from the API directory:
+Run from the backend directory:
 
 ```powershell
 cd backend

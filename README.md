@@ -2,7 +2,7 @@
 
 ![React](https://img.shields.io/badge/frontend-React%20%2B%20Vite-a44f2a)
 ![FastAPI](https://img.shields.io/badge/backend-FastAPI%20%2B%20SQLAlchemy-24160c)
-![LangChain](https://img.shields.io/badge/agent%20layer-LangChain-2f7a55)
+![OpenAI](https://img.shields.io/badge/AI-OpenAI%20API-2f7a55)
 ![Qdrant](https://img.shields.io/badge/vector%20store-Qdrant%20default-5e8c7b)
 ![MySQL](https://img.shields.io/badge/database-MySQL-9c6b1f)
 
@@ -24,8 +24,9 @@ It is built as a portfolio-grade MVP around explainable agentic RAG: LLMs handle
 
 - Frontend: React, Vite, TypeScript, React Router, PDF.js
 - Backend: FastAPI, SQLAlchemy, Alembic, MySQL
-- Agent/RAG layer: LangChain with Ollama-first local models
-- AI providers: `mock`, `ollama`, and `openai`
+- Model layer: native OpenAI SDK, Responses API, strict structured outputs
+- AI providers: `openai` (default) and `mock` (offline fixtures)
+- Generation: `gpt-6-luna`, reasoning `none`; embeddings: `text-embedding-3-small`
 - Vector retrieval: Qdrant by default with MySQL JSON cosine similarity as fallback
 - Memory: MySQL source-of-truth rows indexed into Qdrant for semantic recall, with MySQL fallback
 
@@ -53,7 +54,7 @@ It is built as a portfolio-grade MVP around explainable agentic RAG: LLMs handle
 
 ### 1. Configure Environment
 
-Copy `.env.example` to `.env` and set your MySQL values.
+Copy `.env.example` to the repository-root `.env` if it does not already exist. Set your MySQL credentials and backend-only `OPENAI_API_KEY`. If `DATABASE_URL` is set, it takes precedence over the separate MySQL settings. Never put the key in a `VITE_` variable or commit `.env`.
 
 Recommended local settings:
 
@@ -64,8 +65,11 @@ MYSQL_USER=root
 MYSQL_PASSWORD=your-password
 MYSQL_DATABASE=research_macha
 
-AI_PROVIDER=ollama
-OLLAMA_CHAT_MODEL=gpt-oss:20b-cloud
+AI_PROVIDER=openai
+OPENAI_API_KEY=your-api-key
+OPENAI_MODEL=gpt-6-luna
+OPENAI_EMBED_MODEL=text-embedding-3-small
+OPENAI_REASONING_EFFORT=none
 
 VECTOR_PROVIDER=qdrant
 QDRANT_URL=http://localhost:6333
@@ -79,6 +83,8 @@ Create the database:
 CREATE DATABASE research_macha;
 ```
 
+Python 3.12+, Node.js 22+, MySQL, and Docker for Qdrant are required. OpenAI access requires an API key and billing credit. [OpenAI setup and development reset](docs/openai-setup.md) covers the provider switch, optional cleanup, credit controls, and troubleshooting. Ollama is no longer required.
+
 ### 2. Start Qdrant
 
 ```powershell
@@ -90,16 +96,17 @@ docker compose up -d qdrant
 ```powershell
 cd backend
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .[dev]
-.\.venv\Scripts\alembic.exe upgrade head
-.\.venv\Scripts\uvicorn.exe app.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -B -m alembic upgrade head
+# For an existing checkout switching providers, see the one-time reset instructions first.
+.\.venv\Scripts\python.exe -B -m uvicorn app.main:app --reload --port 8000
 ```
 
 ### 4. Start Frontend
 
 ```powershell
 cd frontend
-cmd /c npm install
+cmd /c npm ci
 cmd /c npm run dev
 ```
 
@@ -122,12 +129,14 @@ Run checks:
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider
 
 cd ..\frontend
-cmd /c npm audit --json
+cmd /c npm test -- --run
 cmd /c npm run build
 ```
+
+Automated backend tests force mock mode, remove the API key from their process, disable the worker, and reject external HTTP. They do not evaluate the real model or spend OpenAI credits. Using the application with `AI_PROVIDER=openai` does incur usage; no live model evaluation was run for this migration.
 
 ## What Makes This Agentic
 
@@ -148,6 +157,7 @@ This makes the agent behavior inspectable in the UI and queryable in MySQL.
 ## Documentation
 
 - [Product specification](docs/product-spec.md): intended researcher experience, feature requirements, and completion criteria.
+- [OpenAI setup](docs/openai-setup.md): model settings, optional development reset, credit controls, and startup commands.
 - [Showcase](docs/showcase.md): portfolio explanation of agentic RAG, tool use, memory, and vector retrieval.
 - [Architecture](docs/architecture.md): system architecture and data flow.
 - [Walkthrough](docs/walkthrough.md): demo script and visual assets.
@@ -158,6 +168,8 @@ This makes the agent behavior inspectable in the UI and queryable in MySQL.
 
 - Discovery is limited to arXiv.
 - PDFs must be born-digital; OCR is not included.
-- Background work runs in-process through FastAPI background tasks.
+- Import, analysis, and synthesis run through a database-leased worker in the FastAPI process. Use one backend process; multiple API workers are unsupported.
+- Application state and PDFs remain local, but prompts and document text used for generation/embeddings are sent to OpenAI. This is not offline inference.
+- New model quality and live workflow latency still require user testing. The app never upgrades to a more expensive model automatically.
 - The app is single-user and local-first; no hosted auth is included.
 - Memory is intentionally simple and becomes useful after repeated workflows.

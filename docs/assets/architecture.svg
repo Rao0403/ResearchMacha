@@ -1,6 +1,6 @@
 <svg width="1100" height="680" viewBox="0 0 1100 680" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">ResearchMacha architecture diagram</title>
-  <desc id="desc">A diagram showing the React workbench, FastAPI backend, agent tools, LangChain model layer, MySQL, Qdrant, and PDF processing pipeline.</desc>
+  <desc id="desc">A diagram showing the React workbench, FastAPI backend, agent tools, OpenAI model layer, MySQL, Qdrant, and PDF processing pipeline.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1100" y2="680" gradientUnits="userSpaceOnUse">
       <stop stop-color="#FBF6EF"/>
@@ -44,8 +44,8 @@
 
   <g filter="url(#shadow)">
     <rect x="795" y="150" width="245" height="155" rx="22" fill="#24160C"/>
-    <text x="824" y="194" fill="#FFF9F1" font-family="Georgia, serif" font-size="24" font-weight="700">LangChain Layer</text>
-    <text x="824" y="228" fill="#EBDCC9" font-family="Arial, sans-serif" font-size="14">Ollama / OpenAI adapters</text>
+    <text x="824" y="194" fill="#FFF9F1" font-family="Georgia, serif" font-size="24" font-weight="700">OpenAI Layer</text>
+    <text x="824" y="228" fill="#EBDCC9" font-family="Arial, sans-serif" font-size="14">Responses / Embeddings API</text>
     <text x="824" y="250" fill="#EBDCC9" font-family="Arial, sans-serif" font-size="14">Structured JSON chains</text>
     <text x="824" y="272" fill="#EBDCC9" font-family="Arial, sans-serif" font-size="14">Retry and fallback</text>
   </g>

@@ -2,29 +2,35 @@
 
 Use this checklist after implementation phases and before recording portfolio media.
 
+Automated tests use mock/fake adapters, suppress real API credentials, and block external HTTP. Manual acceptance below uses paid calls when `AI_PROVIDER=openai`. Run one small reader example first, inspect usage, then expand only as needed. Live model evaluation is a user step; no real model results are implied by fixture tests. See [OpenAI setup and credit controls](openai-setup.md).
+
 ## Automated Checks
 
 Backend:
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider
 ```
 
 Frontend:
 
 ```powershell
 cd frontend
-cmd /c npm audit --json
+cmd /c npm test -- --run
+cmd /c npm exec tsc -- -p tsconfig.app.json --noEmit --incremental false
 cmd /c npm run build
+cmd /c npm run test:e2e
 ```
 
 Database migrations:
 
 ```powershell
 cd backend
-.\.venv\Scripts\alembic.exe upgrade head
+.\.venv\Scripts\python.exe -B -m alembic upgrade head
 ```
+
+MySQL lock/concurrency tests are skipped without `TEST_MYSQL_URL`. To run them, set that variable to a local MySQL account with permission to create/drop disposable `research_macha_test_*` databases, then run the backend suite. The fixture generates isolated database names and deletes only those databases. Do not point diagnostic SQL/reset commands at valuable data. CI configures a dedicated MySQL service.
 
 ## Local Services
 
@@ -38,15 +44,15 @@ Check Qdrant collections after analyzing papers:
 
 ```powershell
 Invoke-RestMethod http://localhost:6333/collections
-Invoke-RestMethod http://localhost:6333/collections/research_macha_chunks
-Invoke-RestMethod http://localhost:6333/collections/research_macha_memories
 ```
+
+Collection names include a 12-character fingerprint suffix, such as `research_macha_chunks_<hash>`. Inspect the names returned above instead of assuming an unsuffixed collection. Legacy spaces are not mixed with new OpenAI vectors.
 
 Start backend:
 
 ```powershell
 cd backend
-.\.venv\Scripts\uvicorn.exe app.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -B -m uvicorn app.main:app --reload --port 8000
 ```
 
 Start frontend:
@@ -74,6 +80,8 @@ Expected behavior:
 - The final brief includes cited findings, gaps, suggested experiments, and research directions.
 - Fallback notices are visible if any model/retrieval fallback occurs.
 - Memory signals appear after approval and analysis.
+- Failed required imports/analyses block synthesis. Retry resumes failed work; Exclude removes only project membership/candidates, retaining library papers.
+- GET polling does not start model calls or change state. Generation warnings and degraded/mock/legacy modes are visible.
 
 MySQL checks:
 
@@ -101,6 +109,8 @@ Expected behavior:
 - Clicking note/highlight/chat citations jumps to the cited PDF page.
 - Chat answers cite source pages.
 - Failed analysis can be retried from the reader.
+- A failed reanalysis keeps the previous successful notes visible.
+- Check a later-page claim as well as an abstract claim; grounded citations do not by themselves prove full-document coverage or semantic accuracy.
 
 ## Batch Summary Acceptance
 
@@ -109,7 +119,7 @@ Expected behavior:
 - Multi-file PDF upload creates one analysis job per file.
 - Each paper row shows status.
 - Failed paper rows can be retried.
-- When all papers are ready, a consolidated summary appears.
+- When all papers are ready/degraded, a consolidated summary appears and degradation warnings are visible.
 - The table includes main idea, problem/hypothesis, experiments, models/datasets, results, and conclusions.
 - Paper titles link back to the reader.
 - `Export CSV` downloads the comparison table.
@@ -127,6 +137,7 @@ Then ask a reader chat question.
 Expected behavior:
 
 - The app still answers using MySQL fallback retrieval.
+- If compatible embeddings are unavailable, lexical/initial-chunk retrieval is explicitly labelled; no silent hash embeddings replace a failed provider call.
 - A fallback notice is visible in the response or trace.
 
 Restart Qdrant:

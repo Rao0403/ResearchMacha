@@ -3,22 +3,11 @@
 ## Prerequisites
 
 - MySQL running locally.
-- Ollama installed.
-- `gpt-oss:20b-cloud` available through Ollama.
+- OpenAI API key with credit and access to the configured model.
 - Python environment installed under `backend/.venv`.
 - npm dependencies installed under `frontend/node_modules`.
 
-Check local Ollama models:
-
-```powershell
-ollama list
-```
-
-The preferred model line is:
-
-```text
-gpt-oss:20b-cloud
-```
+Follow [OpenAI setup](openai-setup.md) first, including the optional development reset if switching from old provider runs. This demo uses paid API calls; start with one paper rather than approving a full shortlist when checking costs.
 
 ## Environment
 
@@ -30,8 +19,11 @@ MYSQL_PORT=3306
 MYSQL_USER=root
 MYSQL_PASSWORD=your-password
 MYSQL_DATABASE=research_macha
-AI_PROVIDER=ollama
-OLLAMA_CHAT_MODEL=gpt-oss:20b-cloud
+AI_PROVIDER=openai
+OPENAI_API_KEY=your-api-key
+OPENAI_MODEL=gpt-6-luna
+OPENAI_EMBED_MODEL=text-embedding-3-small
+OPENAI_REASONING_EFFORT=none
 VECTOR_PROVIDER=qdrant
 QDRANT_MEMORY_COLLECTION=research_macha_memories
 ```
@@ -60,7 +52,7 @@ QDRANT_MEMORY_COLLECTION=research_macha_memories
 Reinstall backend dependencies after pulling this change:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -e .[dev]
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
 ## Run
@@ -69,16 +61,15 @@ Backend:
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m pip install -e .[dev]
-.\.venv\Scripts\alembic.exe upgrade head
-.\.venv\Scripts\uvicorn.exe app.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -B -m alembic upgrade head
+.\.venv\Scripts\python.exe -B -m uvicorn app.main:app --reload --port 8000
 ```
 
 Frontend:
 
 ```powershell
 cd frontend
-cmd /c npm install
+cmd /c npm ci
 cmd /c npm run dev
 ```
 
@@ -111,14 +102,15 @@ http://localhost:5173
 
 1. Open `Batch Summary`.
 2. Upload one or more PDFs.
-3. Wait for each paper status to become `ready`.
+3. Wait for each paper status to become `ready` or `degraded`; inspect any warning.
 4. Inspect the overall takeaway and comparison table.
 
 ## Troubleshooting
 
-- If synthesis looks generic, confirm `AI_PROVIDER=ollama` and Ollama is running.
-- If embeddings fail because `nomic-embed-text` is not available, the backend falls back to deterministic embeddings for the MVP.
+- If synthesis looks generic, inspect generation mode and warnings. `extractive` means source passages were returned after a generation failure; `mock` means explicit fixture mode.
+- If embeddings fail, the backend preserves chunks and uses lexical retrieval with a warning; it never silently substitutes hash vectors for a failed OpenAI request.
 - If arXiv import fails, check network access and retry with fewer selected papers.
 - If MySQL migration fails, verify `.env` and that the database exists.
-- If a summary endpoint returns `No analyzed paper evidence`, wait for the paper statuses to become `ready`.
+- If a summary endpoint returns `No analyzed paper evidence`, wait for analysis to become `ready`/`degraded`, or inspect the failed job. A failed required import/analysis blocks research synthesis until Retry or Exclude.
 - If Qdrant is down, the app falls back to MySQL retrieval and memory recall. Restart Qdrant and re-analyze papers to populate the vector collections.
+- Authentication, quota, configuration, and incomplete-response warnings need investigation before retrying. Retries/reanalysis may incur fresh charges. Review `AI usage:` logs and the OpenAI usage dashboard.
