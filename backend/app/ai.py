@@ -2,28 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
+import time
 from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+import openai
+from openai import OpenAI
 
 from app.core.config import get_settings
 
-try:
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_ollama import ChatOllama, OllamaEmbeddings
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-except ImportError:  # pragma: no cover - exercised only before optional deps are installed
-    ChatPromptTemplate = None
-    ChatOllama = None
-    OllamaEmbeddings = None
-    ChatOpenAI = None
-    OpenAIEmbeddings = None
-
 settings = get_settings()
+logger = logging.getLogger("uvicorn.error")
 StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
 
 STRICT_JSON_RULES = (
@@ -71,6 +65,34 @@ class AIProviderError(RuntimeError):
 
 class AIOutputValidationError(AIProviderError):
     """Both structured-output attempts failed parsing or evidence validation."""
+
+
+class AIConfigurationError(AIProviderError):
+    pass
+
+
+class AIAuthenticationError(AIProviderError):
+    pass
+
+
+class AIQuotaError(AIProviderError):
+    pass
+
+
+class AIRateLimitError(AIProviderError):
+    pass
+
+
+class AITransportError(AIProviderError):
+    pass
+
+
+class AIRefusalError(AIProviderError):
+    pass
+
+
+class AIIncompleteError(AIProviderError):
+    pass
 
 
 class ResearchBrief(BaseModel):
@@ -341,21 +363,15 @@ class MockProvider(AIProvider):
         )
 
 
-class LangChainProvider(AIProvider):
+class OpenAIProvider(AIProvider):
     def __init__(self) -> None:
-        if ChatPromptTemplate is None:
-            raise AIProviderError("LangChain dependencies are not installed")
+        validate_ai_configuration()
         try:
             self.chat_model = build_chat_model()
             self.embedding_model = build_embedding_model()
         except Exception as exc:
-            raise AIProviderError(f"Could not initialize {settings.ai_provider}: {exc}") from exc
-        if settings.ai_provider == "openai":
-            self.embedding_fingerprint = f"openai:{settings.openai_embed_model}"
-        elif settings.ai_provider == "ollama":
-            self.embedding_fingerprint = f"ollama:{settings.ollama_embed_model}"
-        else:  # pragma: no cover - guarded by get_ai_provider
-            raise AIProviderError(f"Unsupported AI provider: {settings.ai_provider}")
+            raise AIConfigurationError("Could not initialize OpenAI; check backend configuration.") from exc
+        self.embedding_fingerprint = f"openai:{settings.openai_embed_model}"
 
     def embed_texts(self, texts: list[str]) -> EmbeddingResult:
         if self.embedding_model is None:
@@ -363,7 +379,7 @@ class LangChainProvider(AIProvider):
         try:
             vectors = self.embedding_model.embed_documents(texts)
         except Exception as exc:
-            raise AIProviderError(f"{settings.ai_provider} embedding failed: {exc}") from exc
+            raise provider_failure(exc) from exc
         return EmbeddingResult(vectors=vectors, fingerprint=self.embedding_fingerprint)
 
     def plan_research(self, question: str) -> ResearchPlan:
@@ -1117,30 +1133,34 @@ def invoke_structured_json(
                     + str(first_error)[:2000]
                     + "\nCorrect this error using the supplied evidence. Copy identifiers exactly."
                 )
-            structured_method = None
-            if ChatOllama is not None and isinstance(chat_model, ChatOllama):
-                model_name = str(getattr(chat_model, "model", ""))
-                if model_name.endswith("-cloud"):
-                    structured_method = "prompted_json"
-                else:
-                    structured_method = "json_schema" if attempt == 1 else "json_mode"
             result = invoke_structured_once(
                 chat_model,
                 output_model,
                 attempt_prompt,
                 human_template,
                 payload,
-                structured_method=structured_method,
+                schema=strict_output_schema(schema_value),
+                attempt=attempt,
             )
             if validator is not None:
                 validator(result)
             return result
-        except Exception as exc:  # the second failure is converted into a stable domain error
+        except Exception as exc:
             if is_provider_timeout(exc):
                 raise AIProviderError(
                     "Structured generation timed out after "
                     f"{settings.ai_chat_timeout_seconds:g} seconds; repair attempt skipped."
                 ) from exc
+            if isinstance(exc, (AIConfigurationError, AIAuthenticationError, AIQuotaError,
+                                AITransportError, AIRefusalError, AIIncompleteError)):
+                raise
+            if isinstance(exc, openai.APIError):
+                raise provider_failure(exc) from exc
+            if isinstance(exc, AIRateLimitError):
+                if attempt == 2:
+                    raise
+                time.sleep(1)
+                continue
             if attempt == 1:
                 first_error = exc
                 continue
@@ -1159,46 +1179,101 @@ def invoke_structured_once(
     human_template: str,
     payload: dict[str, Any],
     *,
-    structured_method: str | None = None,
+    schema: dict[str, Any] | None = None,
+    attempt: int = 1,
 ) -> StructuredModel:
-    prompt = ChatPromptTemplate.from_messages([("system", escape_template_text(system_prompt)), ("human", human_template)])
-    is_ollama = ChatOllama is not None and isinstance(chat_model, ChatOllama)
-    # We consume only the final JSON. Streaming resets HTTP read timeouts on every
-    # reasoning token, so a busy model can evade the configured timeout indefinitely.
-    invocation_options = {"stream": False} if is_ollama else {}
-    if structured_method == "prompted_json":
-        response = (prompt | chat_model.bind(**invocation_options)).invoke(payload)
-        return parse_prompted_json(response.content, output_model)
-    structured_options = {"method": structured_method} if structured_method else {}
-    structured_model = chat_model.with_structured_output(output_model, **structured_options)
-    chain = prompt | structured_model.bind(**invocation_options)
-    return chain.invoke(payload)
+    started = time.perf_counter()
+    try:
+        response = chat_model.responses.create(
+            model=settings.openai_model,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": human_template.format_map(payload)},
+            ],
+            text={"format": {"type": "json_schema", "name": output_model.__name__,
+                             "strict": True, "schema": schema or strict_output_schema(output_model.model_json_schema())}},
+            reasoning={"effort": settings.openai_reasoning_effort},
+            max_output_tokens=output_budget(output_model.__name__),
+            stream=False,
+            store=False,
+        )
+    except Exception as exc:
+        failure = provider_failure(exc)
+        record_usage(output_model.__name__, started, attempt=attempt, status=type(failure).__name__)
+        raise failure from exc
+    usage = response.usage
+    record_usage(
+        output_model.__name__, started, attempt=attempt, status=response.status,
+        input_tokens=usage.input_tokens if usage else None,
+        output_tokens=usage.output_tokens if usage else None,
+        cached_input_tokens=getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", None),
+        reasoning_tokens=getattr(getattr(usage, "output_tokens_details", None), "reasoning_tokens", None),
+        request_id=getattr(response, "_request_id", None),
+    )
+    if any(getattr(part, "type", None) == "refusal"
+           for item in response.output for part in getattr(item, "content", [])):
+        raise AIRefusalError("OpenAI declined this request. Revise the question or use the available source excerpts.")
+    if response.status != "completed":
+        reason = getattr(getattr(response, "incomplete_details", None), "reason", None) or response.status
+        raise AIIncompleteError(f"OpenAI response was incomplete ({reason}); no automatic retry was made.")
+    return output_model.model_validate_json(response.output_text)
 
 
-def parse_prompted_json(content: Any, output_model: type[StructuredModel]) -> StructuredModel:
-    if isinstance(content, str):
-        text = content.strip()
-    elif isinstance(content, list):
-        text = "".join(
-            str(block.get("text", "")) if isinstance(block, dict) else str(block)
-            for block in content
-        ).strip()
-    else:
-        text = str(content).strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
-    if fenced:
-        text = fenced.group(1)
-    else:
-        object_start = text.find("{")
-        object_end = text.rfind("}")
-        if object_start < 0 or object_end < object_start:
-            raise ValueError("Model response did not contain a JSON object")
-        text = text[object_start : object_end + 1]
-    return output_model.model_validate_json(text)
+def strict_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a request copy, retaining evidence enums and domain constraints."""
+    value = json.loads(json.dumps(schema))
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            node.pop("default", None)
+            if node.get("type") == "object":
+                node["additionalProperties"] = False
+                node["required"] = list(node.get("properties", {}))
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return value
 
 
-def escape_template_text(value: str) -> str:
-    return value.replace("{", "{{").replace("}", "}}")
+def output_budget(schema_name: str) -> int:
+    if schema_name in {"PaperSummaryDraft", "PaperSummaryOutput"}:
+        return settings.ai_summary_max_output_tokens
+    if schema_name in {"ChatDraft", "ChatOutput"}:
+        return settings.ai_chat_max_output_tokens
+    if schema_name in {"ResearchBriefDraft", "ResearchBrief"}:
+        return settings.ai_synthesis_max_output_tokens
+    if schema_name == "BatchSummary":
+        return settings.ai_batch_max_output_tokens
+    return settings.ai_plan_max_output_tokens
+
+
+def record_usage(operation: str, started: float, *, model: str | None = None, **details: Any) -> None:
+    logger.info("AI usage: %s", json.dumps({
+        "provider": "openai", "model": model or settings.openai_model, "operation": operation,
+        "elapsed_seconds": round(time.perf_counter() - started, 3), **details,
+    }))
+
+
+def provider_failure(error: Exception) -> AIProviderError:
+    if isinstance(error, AIProviderError):
+        return error
+    if is_provider_timeout(error):
+        return AITransportError("OpenAI request timed out; no automatic retry was made.")
+    if isinstance(error, (openai.AuthenticationError, openai.PermissionDeniedError)):
+        return AIAuthenticationError("OpenAI rejected the API key or model access. Check your project key and permissions.")
+    if isinstance(error, openai.RateLimitError):
+        if getattr(error, "code", None) in {"insufficient_quota", "billing_hard_limit_reached"}:
+            return AIQuotaError("OpenAI API credits or quota are exhausted. Check billing before retrying.")
+        return AIRateLimitError("OpenAI rate limit reached. Wait before retrying.")
+    if isinstance(error, (openai.BadRequestError, openai.NotFoundError, openai.UnprocessableEntityError)):
+        return AIConfigurationError("OpenAI rejected the model, schema, or request configuration. Check backend settings.")
+    if isinstance(error, (openai.APIConnectionError, openai.InternalServerError)):
+        return AITransportError("OpenAI could not complete the request. Retry when the service is available.")
+    return AIProviderError(f"OpenAI operation failed: {error}")
 
 
 def is_provider_timeout(error: BaseException) -> bool:
@@ -1218,39 +1293,39 @@ def is_provider_timeout(error: BaseException) -> bool:
 
 
 def build_chat_model() -> Any:
-    if settings.ai_provider == "openai":
-        return ChatOpenAI(
-            model=settings.openai_model,
-            api_key=settings.openai_api_key,
-            request_timeout=settings.ai_chat_timeout_seconds,
-            max_tokens=settings.ai_max_output_tokens,
-            max_retries=0,
-        )
-    return ChatOllama(
-        model=settings.ollama_chat_model,
-        base_url=settings.ollama_base_url,
-        temperature=0,
-        reasoning=settings.ollama_reasoning_effort,
-        num_predict=settings.ai_max_output_tokens,
-        client_kwargs={"timeout": settings.ai_chat_timeout_seconds},
+    return OpenAI(
+        api_key=settings.openai_api_key,
+        timeout=settings.ai_chat_timeout_seconds,
+        max_retries=0,
     )
 
 
 def build_embedding_model() -> Any:
-    if settings.ai_provider == "openai" and OpenAIEmbeddings is not None:
-        return OpenAIEmbeddings(
-            model=settings.openai_embed_model,
-            api_key=settings.openai_api_key,
-            request_timeout=settings.ai_embedding_timeout_seconds,
-            max_retries=0,
-        )
-    if settings.ai_provider == "ollama" and OllamaEmbeddings is not None:
-        return OllamaEmbeddings(
-            model=settings.ollama_embed_model,
-            base_url=settings.ollama_base_url,
-            client_kwargs={"timeout": settings.ai_embedding_timeout_seconds},
-        )
-    return None
+    return OpenAIEmbeddingModel()
+
+
+class OpenAIEmbeddingModel:
+    def __init__(self) -> None:
+        self.client = OpenAI(api_key=settings.openai_api_key, timeout=settings.ai_embedding_timeout_seconds, max_retries=0)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        vectors = []
+        for offset in range(0, len(texts), 64):
+            batch = texts[offset:offset + 64]
+            started = time.perf_counter()
+            response = self.client.embeddings.create(model=settings.openai_embed_model, input=batch)
+            record_usage("embeddings", started, model=settings.openai_embed_model, attempt=1,
+                         input_tokens=response.usage.prompt_tokens, output_tokens=0, items=len(batch))
+            ordered = sorted(response.data, key=lambda item: item.index)
+            if [item.index for item in ordered] != list(range(len(batch))):
+                raise AIOutputValidationError("OpenAI embeddings did not contain every requested input exactly once.")
+            vectors.extend(item.embedding for item in ordered)
+        return vectors
+
+
+def validate_ai_configuration() -> None:
+    if settings.ai_provider == "openai" and not (settings.openai_api_key or "").strip():
+        raise AIConfigurationError("Set OPENAI_API_KEY in the repository-root .env before starting the backend.")
 
 
 def make_citation(chunk: dict[str, Any]) -> dict[str, str | int]:
@@ -1464,8 +1539,8 @@ def hash_embedding(text: str) -> list[float]:
 
 
 def get_ai_provider() -> AIProvider:
-    if settings.ai_provider in {"ollama", "openai"}:
-        return LangChainProvider()
+    if settings.ai_provider == "openai":
+        return OpenAIProvider()
     if settings.ai_provider == "mock":
         return MockProvider()
     raise AIProviderError(f"Unknown AI_PROVIDER={settings.ai_provider}")

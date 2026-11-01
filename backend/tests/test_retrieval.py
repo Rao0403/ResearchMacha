@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.ai import LangChainProvider, MockProvider
+from app.ai import OpenAIProvider, MockProvider
 from app.models.paper import Paper, PaperChunk
 from app.services.fallbacks import clear_fallback_events, pop_fallback_events
 from app.services.retrieval import cosine_similarity, lexical_chunks, retrieve_paper_chunks
@@ -112,7 +112,7 @@ def test_mock_embeddings_are_explicitly_fingerprinted() -> None:
 
 
 def test_provider_embedding_failure_does_not_return_hash_vectors() -> None:
-    provider = object.__new__(LangChainProvider)
+    provider = object.__new__(OpenAIProvider)
     provider.embedding_model = FailingEmbeddingModel()
     provider.embedding_fingerprint = "ollama:test-model"
 

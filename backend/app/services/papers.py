@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from app.core.config import get_settings
 
 from app.models.paper import ChatSession, Job, Paper
 from app.models.states import JobStatus
@@ -95,6 +96,7 @@ def create_uploaded_papers_with_jobs(
                 status=JobStatus.QUEUED,
                 requested_generation=1,
                 idempotency_key=f"analysis:{paper.id}:1",
+                payload={"ai_provider": get_settings().ai_provider},
             )
             db.add(job)
             created.append((paper, job))

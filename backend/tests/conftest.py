@@ -1,19 +1,35 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+import os
 from types import SimpleNamespace
 
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# Tests never inherit real AI credentials or start a paid background worker.
+os.environ["AI_PROVIDER"] = "mock"
+os.environ["OPENAI_API_KEY"] = ""
+os.environ["JOB_WORKER_ENABLED"] = "false"
 
 from app.api.deps import get_db
 from app.core.database import Base
 from app.main import app
 from app import main
 from app.services import storage
+
+
+@pytest.fixture(autouse=True)
+def forbid_external_http(monkeypatch):
+    def blocked(*args, **kwargs):
+        raise AssertionError("External HTTP is disabled in tests. Use a fake adapter or httpx.MockTransport.")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", blocked)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", blocked)
 
 
 @pytest.fixture

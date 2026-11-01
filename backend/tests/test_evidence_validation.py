@@ -173,7 +173,7 @@ def test_brief_citations_are_hydrated_from_the_supplied_paper(monkeypatch) -> No
         return draft
 
     monkeypatch.setattr(ai, "invoke_structured_json", fake_invoke)
-    provider = object.__new__(ai.LangChainProvider)
+    provider = object.__new__(ai.OpenAIProvider)
     provider.chat_model = object()
 
     brief = provider.synthesize_collection("Compare", contexts)
@@ -210,7 +210,7 @@ def test_summary_draft_is_hydrated_with_deterministic_citations(monkeypatch) -> 
         return output
 
     monkeypatch.setattr(ai, "invoke_structured_json", fake_invoke)
-    provider = object.__new__(ai.LangChainProvider)
+    provider = object.__new__(ai.OpenAIProvider)
     provider.chat_model = object()
     chunks = [
         {
@@ -294,7 +294,7 @@ def test_chat_draft_is_hydrated_with_a_verbatim_citation(monkeypatch) -> None:
         "invoke_structured_json",
         lambda *args, **kwargs: ai.ChatDraft(answer="The reported result improved.", chunk_ids=["chunk-1"]),
     )
-    provider = object.__new__(ai.LangChainProvider)
+    provider = object.__new__(ai.OpenAIProvider)
     provider.chat_model = object()
     chunks = [
         {
@@ -367,28 +367,6 @@ def test_structured_invocation_repairs_once_after_domain_validation_failure(monk
     assert "repair" in calls[1]
 
 
-def test_ollama_prompted_json_disables_internal_streaming(monkeypatch) -> None:
-    from langchain_core.messages import AIMessage
-    from langchain_core.runnables import RunnableLambda
-
-    options = []
-
-    def respond(prompt, **kwargs):
-        options.append(kwargs)
-        return AIMessage(content='{"search_queries":["q"],"inclusion_criteria":["evidence"]}')
-
-    model = RunnableLambda(respond)
-    monkeypatch.setattr(ai, "ChatOllama", type(model))
-
-    result = ai.invoke_structured_once(
-        model, ResearchPlan, "Plan", "Question: {question}", {"question": "Q"},
-        structured_method="prompted_json",
-    )
-
-    assert result.search_queries == ["q"]
-    assert options == [{"stream": False}]
-
-
 def test_structured_invocation_stops_after_two_invalid_attempts(monkeypatch) -> None:
     calls = []
 
@@ -450,98 +428,6 @@ def test_generation_schema_and_example_only_offer_current_evidence(monkeypatch) 
     example_text = prompts[0].split("Example valid JSON:\n", 1)[1]
     assert json.loads(schema_text)["properties"]["chunk_ids"]["items"]["enum"] == ["e1"]
     assert json.loads(example_text)["chunk_ids"] == ["e1"]
-
-
-def test_ollama_clients_have_bounded_requests_and_low_reasoning(monkeypatch) -> None:
-    chat_options = {}
-    embedding_options = {}
-
-    def fake_chat(**kwargs):
-        chat_options.update(kwargs)
-        return object()
-
-    def fake_embeddings(**kwargs):
-        embedding_options.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(ai, "ChatOllama", fake_chat)
-    monkeypatch.setattr(ai, "OllamaEmbeddings", fake_embeddings)
-    monkeypatch.setattr(ai.settings, "ai_provider", "ollama")
-    monkeypatch.setattr(ai.settings, "ai_chat_timeout_seconds", 180)
-    monkeypatch.setattr(ai.settings, "ai_embedding_timeout_seconds", 60)
-    monkeypatch.setattr(ai.settings, "ai_max_output_tokens", 2500)
-    monkeypatch.setattr(ai.settings, "ollama_reasoning_effort", "low")
-
-    ai.build_chat_model()
-    ai.build_embedding_model()
-
-    assert chat_options["reasoning"] == "low"
-    assert chat_options["num_predict"] == 2500
-    assert chat_options["client_kwargs"] == {"timeout": 180}
-    assert embedding_options["client_kwargs"] == {"timeout": 60}
-
-
-def test_ollama_structured_retry_switches_from_schema_to_json_mode(monkeypatch) -> None:
-    class FakeOllama:
-        pass
-
-    methods = []
-
-    def fake_invoke(*args, structured_method=None, **kwargs):
-        methods.append(structured_method)
-        if len(methods) == 1:
-            raise ValueError("schema response was null")
-        return ResearchPlan(search_queries=["valid"], inclusion_criteria=["Evidence"])
-
-    monkeypatch.setattr(ai, "ChatOllama", FakeOllama)
-    monkeypatch.setattr(ai, "invoke_structured_once", fake_invoke)
-
-    result = ai.invoke_structured_json(
-        FakeOllama(),
-        ResearchPlan,
-        "Plan",
-        "Question: {question}",
-        {"question": "Q"},
-    )
-
-    assert result.search_queries == ["valid"]
-    assert methods == ["json_schema", "json_mode"]
-
-
-def test_ollama_cloud_uses_prompted_json_for_both_attempts(monkeypatch) -> None:
-    class FakeCloudOllama:
-        model = "gpt-oss:20b-cloud"
-
-    methods = []
-
-    def fake_invoke(*args, structured_method=None, **kwargs):
-        methods.append(structured_method)
-        if len(methods) == 1:
-            raise ValueError("malformed JSON")
-        return ResearchPlan(search_queries=["valid"], inclusion_criteria=["Evidence"])
-
-    monkeypatch.setattr(ai, "ChatOllama", FakeCloudOllama)
-    monkeypatch.setattr(ai, "invoke_structured_once", fake_invoke)
-
-    result = ai.invoke_structured_json(
-        FakeCloudOllama(),
-        ResearchPlan,
-        "Plan",
-        "Question: {question}",
-        {"question": "Q"},
-    )
-
-    assert result.search_queries == ["valid"]
-    assert methods == ["prompted_json", "prompted_json"]
-
-
-def test_prompted_json_parser_accepts_fenced_content() -> None:
-    result = ai.parse_prompted_json(
-        'Explanation before output.\n```json\n{"search_queries":["rag"],"inclusion_criteria":["evidence"]}\n```',
-        ResearchPlan,
-    )
-
-    assert result.search_queries == ["rag"]
 
 
 def test_candidate_selection_rejects_unknown_and_duplicate_ids() -> None:

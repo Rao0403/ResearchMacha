@@ -22,6 +22,22 @@ def utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def check_pending_provider_jobs(
+    session_factory: Callable[[], Session] = SessionLocal,
+    *, settings: Settings | None = None,
+) -> None:
+    config = settings or get_settings()
+    if config.ai_provider != "openai":
+        return
+    with session_factory() as db:
+        pending = db.query(Job).filter(Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING])).all()
+        if any((job.payload or {}).get("ai_provider") != "openai" for job in pending):
+            raise RuntimeError(
+                "Pending jobs belong to the previous AI provider. No paid work was started. "
+                "Stop the backend and run python -m scripts.reset_development --help to clear development data."
+            )
+
+
 def recover_interrupted_jobs(
     session_factory: Callable[[], Session] = SessionLocal,
     *,
@@ -203,6 +219,7 @@ class JobWorker:
         self._threads: list[threading.Thread] = []
 
     def start(self) -> None:
+        check_pending_provider_jobs(self.session_factory, settings=self.settings)
         recover_interrupted_jobs(
             self.session_factory,
             worker_id=self.worker_id,

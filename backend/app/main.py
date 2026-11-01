@@ -9,12 +9,14 @@ from app.api.router import api_router
 from app.core.config import get_settings
 from app.services.storage import ensure_storage_dirs
 from app.services.jobs import JobWorker
+from app.ai import validate_ai_configuration
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    validate_ai_configuration()
     ensure_storage_dirs()
     worker = None
     if settings.job_worker_enabled:

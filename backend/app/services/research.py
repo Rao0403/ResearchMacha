@@ -24,6 +24,7 @@ from app.ai import (
     validate_candidate_selection,
 )
 from app.core.database import SessionLocal
+from app.core.config import get_settings
 from app.models.paper import AgentRun, AgentStep, Job, Paper, PaperChunk, PaperSummary, ResearchCandidate, ResearchProject, ResearchProjectPaper
 from app.models.states import JobStatus
 from app.schemas.memory import ResearchMemoryRead
@@ -429,7 +430,7 @@ def import_selected_candidates(
                 job_type="import",
                 status=JobStatus.QUEUED,
                 idempotency_key=key,
-                payload={"arxiv_id": candidate.arxiv_id},
+                payload={"arxiv_id": candidate.arxiv_id, "ai_provider": get_settings().ai_provider},
             )
             db.add(job)
 
@@ -718,6 +719,7 @@ def _create_synthesis_job(db: Session, project: ResearchProject) -> Job:
         status=JobStatus.QUEUED,
         idempotency_key=key,
         requested_generation=project.synthesis_generation,
+        payload={"ai_provider": get_settings().ai_provider},
     )
     project.status = "synthesis_queued"
     db.add_all([project, job])

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
+from app.core.config import get_settings
 from app.models.paper import ChatMessage, ChatSession, Highlight, Job, Paper, PaperChunk, PaperSummary, default_id
 from app.models.states import JobStatus
 from app.schemas.paper import ChatMessageRead, ChatResponse
@@ -55,6 +56,7 @@ def enqueue_analysis_job(db: Session, paper_id: str, auto_reset: bool) -> Job:
         status=JobStatus.QUEUED,
         requested_generation=requested_generation,
         idempotency_key=idempotency_key,
+        payload={"ai_provider": get_settings().ai_provider},
     )
     if paper.analysis_generation == 0:
         paper.status = "queued"

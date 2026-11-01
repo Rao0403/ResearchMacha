@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 from types import SimpleNamespace
 
-from app.ai import EvidenceCitation, MockProvider, PaperFinding, ResearchBrief, escape_template_text
+from app.ai import EvidenceCitation, MockProvider, PaperFinding, ResearchBrief
 from app.services.arxiv import ARXIV_API, ArxivEntry, build_search_query
 from app.services.research import apply_memory_bias, ensure_cited_brief, infer_preference_profile, score_candidate
 
@@ -82,12 +82,6 @@ def test_arxiv_query_builder_uses_keywords_without_raw_question_syntax() -> None
     assert "all:reduce" in query
     assert "all:hallucinations" in query
     assert "how" not in query
-
-
-def test_prompt_escaping_preserves_json_as_literal_template_text() -> None:
-    escaped = escape_template_text('{"search_queries": ["rag"], "inclusion_criteria": ["evidence"]}')
-
-    assert escaped == '{{"search_queries": ["rag"], "inclusion_criteria": ["evidence"]}}'
 
 
 def test_mock_candidate_selection_uses_top_ranked_papers() -> None:

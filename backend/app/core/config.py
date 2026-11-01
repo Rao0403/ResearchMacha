@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,17 +40,18 @@ class Settings(BaseSettings):
     qdrant_memory_collection: str = "research_macha_memories"
     qdrant_vector_size: int | None = None
 
-    ai_provider: str = "mock"
+    ai_provider: Literal["openai", "mock"] = "openai"
     openai_api_key: str | None = None
-    openai_model: str = "gpt-4.1-mini"
+    openai_model: str = "gpt-6-luna"
     openai_embed_model: str = "text-embedding-3-small"
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_chat_model: str = "gpt-oss:20b-cloud"
-    ollama_embed_model: str = "nomic-embed-text"
+    openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "none"
     ai_chat_timeout_seconds: float = Field(default=180, gt=0)
     ai_embedding_timeout_seconds: float = Field(default=60, gt=0)
-    ai_max_output_tokens: int = Field(default=2500, gt=0)
-    ollama_reasoning_effort: str = "low"
+    ai_plan_max_output_tokens: int = Field(default=1500, gt=0)
+    ai_summary_max_output_tokens: int = Field(default=4000, gt=0)
+    ai_chat_max_output_tokens: int = Field(default=1500, gt=0)
+    ai_synthesis_max_output_tokens: int = Field(default=6000, gt=0)
+    ai_batch_max_output_tokens: int = Field(default=6000, gt=0)
 
     model_config = SettingsConfigDict(
         env_file=(ROOT_DIR / ".env", ROOT_DIR / ".env.local"),

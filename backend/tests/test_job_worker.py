@@ -9,7 +9,8 @@ from app.core.config import Settings
 from app.core.database import Base
 from app.models.paper import Job, Paper
 from app.models.states import JobStatus
-from app.services.jobs import claim_next_job, recover_interrupted_jobs, utc_now
+from app.services.jobs import check_pending_provider_jobs, claim_next_job, recover_interrupted_jobs, utc_now
+import pytest
 
 
 def worker_database(tmp_path):
@@ -103,4 +104,19 @@ def test_completed_jobs_are_never_replayed(tmp_path) -> None:
     assert claim_next_job(factory, worker_id="new-worker", settings=settings) is None
     with factory() as db:
         assert db.get(Job, job_id).status == JobStatus.COMPLETED
+    engine.dispose()
+
+
+def test_openai_worker_refuses_to_replay_legacy_jobs_with_paid_provider(tmp_path) -> None:
+    engine, factory, settings = worker_database(tmp_path)
+    settings.ai_provider = "openai"
+    job_id = add_analysis_job(factory)
+    with pytest.raises(RuntimeError, match="No paid work was started"):
+        check_pending_provider_jobs(factory, settings=settings)
+    with factory() as db:
+        job = db.get(Job, job_id)
+        assert job.status == JobStatus.QUEUED
+        job.payload = {"ai_provider": "openai"}
+        db.commit()
+    check_pending_provider_jobs(factory, settings=settings)
     engine.dispose()
