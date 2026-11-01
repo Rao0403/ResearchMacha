@@ -27,7 +27,7 @@ The backend includes a small seed script for creating a demo research project wi
 Run from the API directory:
 
 ```powershell
-cd api
+cd backend
 .\.venv\Scripts\python.exe scripts\seed_demo.py
 ```
 

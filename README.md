@@ -33,7 +33,7 @@ It is built as a portfolio-grade MVP around explainable agentic RAG: LLMs handle
 
 ```text
 .
-|-- api
+|-- backend
 |   |-- alembic
 |   |-- app
 |   |-- scripts
@@ -45,7 +45,7 @@ It is built as a portfolio-grade MVP around explainable agentic RAG: LLMs handle
 |   |-- showcase.md
 |   |-- testing-checklist.md
 |   `-- walkthrough.md
-`-- web
+`-- frontend
     `-- src
 ```
 
@@ -88,7 +88,7 @@ docker compose up -d qdrant
 ### 3. Start Backend
 
 ```powershell
-cd api
+cd backend
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .[dev]
 .\.venv\Scripts\alembic.exe upgrade head
@@ -98,7 +98,7 @@ python -m venv .venv
 ### 4. Start Frontend
 
 ```powershell
-cd web
+cd frontend
 cmd /c npm install
 cmd /c npm run dev
 ```
@@ -114,17 +114,17 @@ http://localhost:5173
 Seed a demo research project with known arXiv candidates:
 
 ```powershell
-cd api
+cd backend
 .\.venv\Scripts\python.exe scripts\seed_demo.py
 ```
 
 Run checks:
 
 ```powershell
-cd api
+cd backend
 .\.venv\Scripts\python.exe -m pytest
 
-cd ..\web
+cd ..\frontend
 cmd /c npm audit --json
 cmd /c npm run build
 ```

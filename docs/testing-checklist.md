@@ -7,14 +7,14 @@ Use this checklist after implementation phases and before recording portfolio me
 Backend:
 
 ```powershell
-cd api
+cd backend
 .\.venv\Scripts\python.exe -m pytest
 ```
 
 Frontend:
 
 ```powershell
-cd web
+cd frontend
 cmd /c npm audit --json
 cmd /c npm run build
 ```
@@ -22,7 +22,7 @@ cmd /c npm run build
 Database migrations:
 
 ```powershell
-cd api
+cd backend
 .\.venv\Scripts\alembic.exe upgrade head
 ```
 
@@ -45,14 +45,14 @@ Invoke-RestMethod http://localhost:6333/collections/research_macha_memories
 Start backend:
 
 ```powershell
-cd api
+cd backend
 .\.venv\Scripts\uvicorn.exe app.main:app --reload --port 8000
 ```
 
 Start frontend:
 
 ```powershell
-cd web
+cd frontend
 cmd /c npm run dev
 ```
 

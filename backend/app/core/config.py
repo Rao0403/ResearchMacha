@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     mysql_database: str = "research_macha"
     database_url: str | None = None
 
-    upload_dir: str = "api/uploads"
+    upload_dir: str = "backend/uploads"
     max_upload_bytes: int = Field(default=50_000_000, gt=0)
     max_batch_files: int = Field(default=10, gt=0)
     max_pdf_pages: int = Field(default=500, gt=0)

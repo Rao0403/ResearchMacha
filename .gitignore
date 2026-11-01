@@ -11,19 +11,19 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-api/.coverage
-api/.pytest_cache/
-api/.mypy_cache/
-api/uploads/
-api/*.egg-info/
+backend/.coverage
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/uploads/
+backend/*.egg-info/
 
-web/node_modules/
-web/dist/
-web/.vite/
-web/*.tsbuildinfo
-web/playwright-report/
-web/test-results/
-web/blob-report/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
 
 coverage/
 tmp/

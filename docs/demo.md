@@ -5,8 +5,8 @@
 - MySQL running locally.
 - Ollama installed.
 - `gpt-oss:20b-cloud` available through Ollama.
-- Python environment installed under `api/.venv`.
-- npm dependencies installed under `web/node_modules`.
+- Python environment installed under `backend/.venv`.
+- npm dependencies installed under `frontend/node_modules`.
 
 Check local Ollama models:
 
@@ -68,7 +68,7 @@ Reinstall backend dependencies after pulling this change:
 Backend:
 
 ```powershell
-cd api
+cd backend
 .\.venv\Scripts\python.exe -m pip install -e .[dev]
 .\.venv\Scripts\alembic.exe upgrade head
 .\.venv\Scripts\uvicorn.exe app.main:app --reload --port 8000
@@ -77,7 +77,7 @@ cd api
 Frontend:
 
 ```powershell
-cd web
+cd frontend
 cmd /c npm install
 cmd /c npm run dev
 ```
