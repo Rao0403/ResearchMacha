@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.ai import get_ai_provider
 from app.models.paper import PaperChunk
 from app.services.fallbacks import record_fallback
+from app.services.pdf import trim_reference_section
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -57,6 +58,31 @@ def retrieve_paper_chunks(
 ) -> list[PaperChunk]:
     from app.services.vector_store import get_vector_store
 
+    chunks = (
+        db.query(PaperChunk)
+        .filter(PaperChunk.paper_id == paper_id)
+        .order_by(PaperChunk.analysis_generation.desc(), PaperChunk.chunk_index.asc())
+        .all()
+    )
+    if chunks:
+        newest_generation = max(chunk.analysis_generation for chunk in chunks)
+        chunks = [chunk for chunk in chunks if chunk.analysis_generation == newest_generation]
+    body_parts = trim_reference_section([
+        {"id": chunk.id, "page_start": chunk.page_start, "text": chunk.text} for chunk in chunks
+    ])
+    body_text = {part["id"]: part["text"] for part in body_parts}
+    body_chunks = {}
+    for chunk in chunks:
+        if chunk.id not in body_text:
+            continue
+        if body_text[chunk.id] != chunk.text:
+            # A transient view preserves the original ID/page without dirtying a stored legacy row.
+            values = {column.key: getattr(chunk, column.key) for column in PaperChunk.__table__.columns}
+            chunk = PaperChunk(**{**values, "text": body_text[chunk.id]})
+        body_chunks[chunk.id] = chunk
+    if not body_chunks:
+        return []
+
     embedding_error: str | None = None
     try:
         result = get_ai_provider().embed_texts([query])
@@ -67,23 +93,16 @@ def retrieve_paper_chunks(
             query_embedding,
             result.fingerprint,
             limit=limit,
+            eligible_chunk_ids=set(body_chunks),
         )
+        compatible = [body_chunks[chunk.id] for chunk in compatible if chunk.id in body_chunks][:limit]
         if compatible:
             return compatible
         embedding_error = "No vectors exist in the active embedding space."
     except Exception as exc:  # noqa: BLE001 - provider/store outages deliberately degrade to lexical retrieval
         embedding_error = str(exc)
 
-    chunks = (
-        db.query(PaperChunk)
-        .filter(PaperChunk.paper_id == paper_id)
-        .order_by(PaperChunk.analysis_generation.desc(), PaperChunk.chunk_index.asc())
-        .all()
-    )
-    if chunks:
-        newest_generation = max(chunk.analysis_generation for chunk in chunks)
-        chunks = [chunk for chunk in chunks if chunk.analysis_generation == newest_generation]
-    selected, fallback = lexical_chunks(query, chunks, limit=limit)
+    selected, fallback = lexical_chunks(query, list(body_chunks.values()), limit=limit)
     record_fallback(
         "retrieval.paper_chunks",
         fallback,

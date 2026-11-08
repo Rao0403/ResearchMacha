@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.ai import OpenAIProvider, MockProvider
+from app.ai import EmbeddingResult, OpenAIProvider, MockProvider
 from app.models.paper import Paper, PaperChunk
 from app.services.fallbacks import clear_fallback_events, pop_fallback_events
 from app.services.retrieval import cosine_similarity, lexical_chunks, retrieve_paper_chunks
@@ -91,7 +91,7 @@ class FailingVectorStore:
     def delete_chunks(self, chunks):
         raise RuntimeError("primary unavailable")
 
-    def search_paper_chunks(self, db, paper_id, query_embedding, embedding_fingerprint, limit=4):
+    def search_paper_chunks(self, db, paper_id, query_embedding, embedding_fingerprint, limit=4, eligible_chunk_ids=None):
         raise RuntimeError("primary unavailable")
 
     def upsert_memories(self, memories):
@@ -210,3 +210,69 @@ class FailingEmbeddingModel:
 class FailingProvider:
     def embed_texts(self, texts):
         raise RuntimeError("provider unavailable")
+
+
+def seed_legacy_reference_chunks(db):
+    paper = Paper(source="upload", title="Paper", authors=[], pdf_path="paper.pdf", status="ready", analysis_generation=1)
+    db.add(paper)
+    db.flush()
+    chunks = [PaperChunk(
+        paper_id=paper.id, analysis_generation=1, chunk_index=index, page_start=page, page_end=page,
+        text=text, embedding=embedding, embedding_fingerprint="openai:test", embedding_dim=2,
+    ) for index, (page, text, embedding) in enumerate([
+        (1, "Main experiment and accuracy results.", [0.0, 1.0]),
+        (5, "Final accuracy result.\nReferences\nForbidden citation keyword.", [0.8, 0.2]),
+        (6, "Forbidden citation keyword repeated in bibliography.", [1.0, 0.0]),
+        (7, "Appendix after the bibliography.", [1.0, 0.0]),
+    ])]
+    db.add_all(chunks)
+    db.commit()
+    return paper, chunks
+
+
+@pytest.mark.parametrize("mode", ["mysql", "qdrant_outage", "lexical"])
+def test_legacy_retrieval_excludes_references_without_mutating_stored_rows(db_session, monkeypatch, mode):
+    paper, chunks = seed_legacy_reference_chunks(db_session)
+    original_text = chunks[1].text
+    store = MySQLVectorStore() if mode != "qdrant_outage" else FallbackVectorStore(FailingVectorStore())
+    provider = FailingProvider() if mode == "lexical" else SimpleNamespace(
+        embed_texts=lambda texts: EmbeddingResult(vectors=[[1.0, 0.0]], fingerprint="openai:test")
+    )
+    monkeypatch.setattr("app.services.retrieval.get_ai_provider", lambda: provider)
+    monkeypatch.setattr("app.services.vector_store.get_vector_store", lambda: store)
+
+    selected = retrieve_paper_chunks(db_session, paper.id, "accuracy", limit=2)
+
+    assert {chunk.id for chunk in selected} == {chunks[0].id, chunks[1].id}
+    assert next(chunk.text for chunk in selected if chunk.id == chunks[1].id) == "Final accuracy result."
+    assert not db_session.dirty and not db_session.new
+    db_session.flush()
+    db_session.expire_all()
+    assert db_session.get(PaperChunk, chunks[1].id).text == original_text
+    assert db_session.query(PaperChunk).filter(PaperChunk.paper_id == paper.id).count() == 4
+
+
+def test_qdrant_filters_eligible_body_ids_before_applying_top_k(db_session, monkeypatch):
+    paper, chunks = seed_legacy_reference_chunks(db_session)
+    store = object.__new__(QdrantVectorStore)
+    store.collection = "chunks"
+    store.client = SimpleNamespace(collection_exists=lambda **kwargs: True)
+    observed = []
+
+    def query(collection, embedding, limit, query_filter):
+        observed.append(query_filter.model_dump(exclude_none=True))
+        assert limit == 1
+        assert query_filter.must[1].match.any == sorted([chunks[0].id, chunks[1].id])
+        return [SimpleNamespace(payload={"chunk_id": chunks[1].id})]
+
+    monkeypatch.setattr(store, "query_points", query)
+    monkeypatch.setattr("app.services.vector_store.get_vector_store", lambda: store)
+    monkeypatch.setattr("app.services.retrieval.get_ai_provider", lambda: SimpleNamespace(
+        embed_texts=lambda texts: EmbeddingResult(vectors=[[1.0, 0.0]], fingerprint="openai:test")
+    ))
+
+    selected = retrieve_paper_chunks(db_session, paper.id, "accuracy", limit=1)
+
+    assert len(observed) == 1
+    assert selected[0].text == "Final accuracy result."
+    assert not db_session.dirty

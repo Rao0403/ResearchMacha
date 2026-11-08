@@ -15,6 +15,7 @@ import openai
 from openai import OpenAI
 
 from app.core.config import get_settings
+from app.services.pdf import trim_reference_section
 
 settings = get_settings()
 logger = logging.getLogger("uvicorn.error")
@@ -873,22 +874,6 @@ def select_summary_chunks(
             return selected
         selected = [selected[index] for index in evenly_spaced_indexes(len(selected), len(selected) - 1)]
     return [ordered[0]]
-
-
-def trim_reference_section(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    body: list[dict[str, Any]] = []
-    minimum_reference_index = max(1, len(chunks) // 5)
-    for index, chunk in enumerate(chunks):
-        text = str(chunk.get("text", ""))
-        match = re.search(r"(?im)^\s*references\s*$", text)
-        if match is None or index < minimum_reference_index:
-            body.append(chunk)
-            continue
-        prefix = text[: match.start()].strip()
-        if prefix:
-            body.append({**chunk, "text": prefix})
-        break
-    return body or chunks
 
 
 def evenly_spaced_indexes(item_count: int, selected_count: int) -> list[int]:

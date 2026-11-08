@@ -1,8 +1,45 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+from typing import Any
 
 from pypdf import PdfReader
+
+
+REFERENCE_HEADING = re.compile(
+    r"^[^\S\r\n]*(?:(?:\d+(?:\.\d+)*|[IVXLCDM]+)[.)]?[^\S\r\n]*)?"
+    r"(?:references(?:[^\S\r\n]+and[^\S\r\n]+notes)?|bibliography|literature[^\S\r\n]+cited)"
+    r"[^\S\r\n]*:?[^\S\r\n]*\r?$",
+    re.IGNORECASE | re.MULTILINE,
+)
+CONTENTS_HEADING = re.compile(r"^\s*(?:table of\s+)?contents\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def trim_reference_section(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep ordered body text before a standalone bibliography heading.
+
+    Works on pages before chunking and on legacy chunks before retrieval.
+    Everything after the heading, including later appendices, is excluded.
+    """
+    def page_key(part: dict[str, Any], index: int) -> Any:
+        return part.get("page_number", part.get("page_start", index))
+
+    contents_pages = {
+        page_key(part, index) for index, part in enumerate(parts)
+        if CONTENTS_HEADING.search(str(part.get("text", "")))
+    }
+    body = []
+    for index, part in enumerate(parts):
+        text = str(part.get("text", ""))
+        match = REFERENCE_HEADING.search(text)
+        if match is not None and page_key(part, index) not in contents_pages:
+            prefix = text[:match.start()].strip()
+            if prefix:
+                body.append({**part, "text": prefix})
+            break
+        body.append(part)
+    return body
 
 
 def extract_pdf_pages(pdf_path: str) -> list[dict[str, str | int]]:
@@ -19,7 +56,7 @@ def extract_pdf_pages(pdf_path: str) -> list[dict[str, str | int]]:
 
 def chunk_pages(pages: list[dict[str, str | int]], max_chars: int = 1800) -> list[dict[str, str | int | None]]:
     chunks: list[dict[str, str | int | None]] = []
-    for page in pages:
+    for page in trim_reference_section(pages):
         page_number = int(page["page_number"])
         paragraphs = [part.strip() for part in str(page["text"]).split("\n\n") if part.strip()]
         buffer: list[str] = []

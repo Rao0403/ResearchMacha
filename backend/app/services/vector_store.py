@@ -38,6 +38,7 @@ class VectorStore(Protocol):
         query_embedding: list[float],
         embedding_fingerprint: str,
         limit: int = 4,
+        eligible_chunk_ids: set[str] | None = None,
     ) -> list[PaperChunk]:
         raise NotImplementedError
 
@@ -77,8 +78,11 @@ class MySQLVectorStore:
         query_embedding: list[float],
         embedding_fingerprint: str,
         limit: int = 4,
+        eligible_chunk_ids: set[str] | None = None,
     ) -> list[PaperChunk]:
-        chunks = (
+        if eligible_chunk_ids is not None and not eligible_chunk_ids:
+            return []
+        query = (
             db.query(PaperChunk)
             .filter(
                 PaperChunk.paper_id == paper_id,
@@ -86,8 +90,10 @@ class MySQLVectorStore:
                 PaperChunk.embedding_dim == len(query_embedding),
             )
             .order_by(PaperChunk.chunk_index.asc())
-            .all()
         )
+        if eligible_chunk_ids is not None:
+            query = query.filter(PaperChunk.id.in_(eligible_chunk_ids))
+        chunks = query.all()
         return top_k_chunks(query_embedding, chunks, limit=limit)
 
     def upsert_memories(self, memories: list[ResearchMemory]) -> None:
@@ -189,14 +195,20 @@ class QdrantVectorStore:
         query_embedding: list[float],
         embedding_fingerprint: str,
         limit: int = 4,
+        eligible_chunk_ids: set[str] | None = None,
     ) -> list[PaperChunk]:
-        if not query_embedding:
+        if not query_embedding or (eligible_chunk_ids is not None and not eligible_chunk_ids):
             return []
 
         collection = self.collection_for(self.collection, embedding_fingerprint)
         if not self.client.collection_exists(collection_name=collection):
             return []
-        points = self.query_points(collection, query_embedding, limit, self.paper_filter(paper_id))
+        query_filter = self.paper_filter(paper_id)
+        if eligible_chunk_ids is not None:
+            query_filter.must.append(qmodels.FieldCondition(
+                key="chunk_id", match=qmodels.MatchAny(any=sorted(eligible_chunk_ids)),
+            ))
+        points = self.query_points(collection, query_embedding, limit, query_filter)
         chunk_ids = [self.extract_chunk_id(point) for point in points]
         chunk_ids = [chunk_id for chunk_id in chunk_ids if chunk_id]
         if not chunk_ids:
@@ -408,10 +420,11 @@ class FallbackVectorStore:
         query_embedding: list[float],
         embedding_fingerprint: str,
         limit: int = 4,
+        eligible_chunk_ids: set[str] | None = None,
     ) -> list[PaperChunk]:
         try:
             results = self.primary.search_paper_chunks(
-                db, paper_id, query_embedding, embedding_fingerprint, limit
+                db, paper_id, query_embedding, embedding_fingerprint, limit, eligible_chunk_ids=eligible_chunk_ids
             )
             if results:
                 return results
@@ -429,7 +442,7 @@ class FallbackVectorStore:
                 {"primary": self.primary.name, "paper_id": paper_id, "limit": limit},
             )
         return self.fallback.search_paper_chunks(
-            db, paper_id, query_embedding, embedding_fingerprint, limit
+            db, paper_id, query_embedding, embedding_fingerprint, limit, eligible_chunk_ids=eligible_chunk_ids
         )
 
     def upsert_memories(self, memories: list[ResearchMemory]) -> None:

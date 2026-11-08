@@ -266,3 +266,49 @@ class FailingSummaryProvider(MockProvider):
 class ModelMustNotRun:
     def __getattr__(self, name):
         raise AssertionError(f"model method {name} must not run")
+
+
+def test_analysis_excludes_references_before_embedding_and_persisting(tmp_path, monkeypatch):
+    engine, factory = analysis_database(tmp_path)
+    paper_id = seed_successful_analysis(factory)
+    store = configure_success(monkeypatch)
+    embedded = []
+
+    class RecordingProvider(MockProvider):
+        def embed_texts(self, texts):
+            embedded.extend(texts)
+            return super().embed_texts(texts)
+
+    monkeypatch.setattr(analysis, "get_ai_provider", lambda: RecordingProvider())
+    monkeypatch.setattr(analysis, "extract_pdf_pages", lambda path: [
+        {"page_number": 1, "text": "Methods and evaluation."},
+        {"page_number": 5, "text": "Final result.\nReferences\nCited authors."},
+        {"page_number": 6, "text": "More cited authors and appendix."},
+    ])
+    with factory() as db:
+        job = analysis.enqueue_analysis_job(db, paper_id, auto_reset=True)
+    analysis.process_analysis_job(job.id, session_factory=factory)
+    assert embedded == ["Methods and evaluation.", "Final result."]
+    assert [chunk.text for chunk in store.upserted] == embedded
+    with factory() as db:
+        chunks = db.query(PaperChunk).filter(PaperChunk.paper_id == paper_id).order_by(PaperChunk.chunk_index).all()
+        assert [chunk.text for chunk in chunks] == embedded
+        assert [chunk.chunk_index for chunk in chunks] == [0, 1]
+        assert max(chunk.page_end for chunk in chunks) == 5
+    engine.dispose()
+
+
+def test_reference_only_analysis_fails_before_any_model_call(tmp_path, monkeypatch):
+    engine, factory = analysis_database(tmp_path)
+    paper_id = seed_successful_analysis(factory)
+    configure_success(monkeypatch)
+    monkeypatch.setattr(analysis, "extract_pdf_pages", lambda path: [{"page_number": 1, "text": "References\nCitation."}])
+    monkeypatch.setattr(analysis, "get_ai_provider", lambda: ModelMustNotRun())
+    with factory() as db:
+        job = analysis.enqueue_analysis_job(db, paper_id, auto_reset=True)
+    analysis.process_analysis_job(job.id, session_factory=factory)
+    with factory() as db:
+        assert db.get(Job, job.id).status == JobStatus.FAILED
+        assert "No main-body text" in db.get(Job, job.id).error_message
+        assert db.get(Paper, paper_id).analysis_generation == 1
+    engine.dispose()

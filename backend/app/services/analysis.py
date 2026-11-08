@@ -119,6 +119,8 @@ def process_analysis_job(
             heartbeat()
         pages = extract_pdf_pages(paper.pdf_path)
         chunks = chunk_pages(pages)
+        if not chunks:
+            raise ValueError("No main-body text was found before the references section")
         if heartbeat:
             heartbeat()
         begin_job_phase(db, job, "embedding_chunks")

@@ -27,6 +27,12 @@ ResearchMacha is an agentic RAG research workbench. The showcase demo has three 
 7. Synthesizer: OpenAI reads available paper evidence and memory signals, then produces a cited brief.
 8. Direction generator: the same synthesis output includes gaps, suggested experiments, and future research directions.
 
+PDF analysis stops at a standalone References/Bibliography heading before chunking and embedding, preserving body text before that heading on the same page. Sections after references, including appendices, are excluded from evidence. Contents pages and prose mentions are not treated as bibliography headings. When no supported heading is detected, the available text is retained. This is deterministic heading detection, not a guarantee for every PDF layout.
+
+Existing analyses retain their stored chunks and vectors. Retrieval applies the same boundary, filters eligible IDs before vector ranking, and trims a mixed body/reference chunk in a transient view. This applies to chat, research synthesis, and batch comparison without writes or paid reanalysis. Existing summaries are retained.
+
+Batch comparison generates a bounded content-only draft: exactly the requested row count, allowed paper IDs, a 600-character takeaway, and short cells (up to 360 characters, reduced for larger batches). ID uniqueness/completeness is validated before returning the existing response format; titles and generation metadata are supplied by the backend. The generation budget remains `AI_BATCH_MAX_OUTPUT_TOKENS=6000` by default.
+
 ## Data Flow
 
 The main persistent objects are:

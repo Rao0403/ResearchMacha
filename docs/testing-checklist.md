@@ -111,6 +111,7 @@ Expected behavior:
 - Failed analysis can be retried from the reader.
 - A failed reanalysis keeps the previous successful notes visible.
 - Check a later-page claim as well as an abstract claim; grounded citations do not by themselves prove full-document coverage or semantic accuracy.
+- Verify body text before a references heading on a shared page remains available, while bibliography entries and appendices after references are excluded from retrieved evidence. Keep a PDF containing a contents page in the regression set.
 
 ## Batch Summary Acceptance
 
@@ -123,6 +124,7 @@ Expected behavior:
 - The table includes main idea, problem/hypothesis, experiments, models/datasets, results, and conclusions.
 - Paper titles link back to the reader.
 - `Export CSV` downloads the comparison table.
+- Each requested paper appears exactly once; cells are concise, titles match source records, and unsupported comparisons are acknowledged. Retry live model testing with the unchanged 6,000-token output cap before considering any increase.
 
 ## Fallback Acceptance
 
