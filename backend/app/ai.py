@@ -124,6 +124,31 @@ class BatchSummary(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+BATCH_COMPARISON_FIELDS = (
+    "main_idea", "problem_or_hypothesis", "experiments",
+    "models_and_datasets", "results", "conclusions",
+)
+
+
+class BatchPaperDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    paper_id: str = Field(min_length=1, max_length=64)
+    main_idea: str = Field(min_length=1, max_length=360)
+    problem_or_hypothesis: str = Field(min_length=1, max_length=360)
+    experiments: str = Field(min_length=1, max_length=360)
+    models_and_datasets: str = Field(min_length=1, max_length=360)
+    results: str = Field(min_length=1, max_length=360)
+    conclusions: str = Field(min_length=1, max_length=360)
+
+
+class BatchComparisonDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    overall_takeaway: str = Field(min_length=1, max_length=600)
+    papers: list[BatchPaperDraft] = Field(min_length=1)
+
+
 @dataclass
 class SummaryPayload:
     sections: dict[str, str]
@@ -494,18 +519,33 @@ class OpenAIProvider(AIProvider):
         return brief
 
     def summarize_batch(self, goal: str, paper_contexts: list[dict[str, Any]]) -> BatchSummary:
-        expected_ids = {context["paper_id"] for context in paper_contexts}
+        paper_ids = [context["paper_id"] for context in paper_contexts]
+        expected_ids = set(paper_ids)
+        if not paper_ids or len(expected_ids) != len(paper_ids):
+            raise EvidenceValidationError("Batch comparison requires distinct supplied papers")
+        cell_max_chars = min(360, max(120, 1800 // len(paper_ids)))
         output = invoke_structured_json(
             self.chat_model,
-            BatchSummary,
-            "Summarize a batch of research papers into a comparison table using only supplied evidence.",
-            "Goal: {goal}\nPaper evidence:\n{context}",
-            {"goal": goal, "context": format_paper_contexts(paper_contexts)},
-            validator=lambda value: validate_batch_output(value, expected_ids),
+            BatchComparisonDraft,
+            "Compare the papers using only supplied evidence. Return exactly one row for every allowed paper ID, "
+            "each ID once. Each cell must contain one or two short sentences, at most the supplied character limit. "
+            "Keep the overall takeaway to at most three short sentences and 600 characters. "
+            "Preserve relevant numbers, datasets, and baselines; state 'Not reported in supplied evidence' when missing. "
+            "Acknowledge incompatible experimental settings. Do not repeat entire summaries across cells, "
+            "include Markdown tables, or add extra papers. Titles and generation metadata are added by the application.",
+            "Goal: {goal}\nAllowed paper IDs: {batch_paper_ids}\nMaximum characters per cell: {batch_cell_max_chars}"
+            "\nPaper evidence:\n{context}",
+            {"goal": goal, "context": format_paper_contexts(paper_contexts),
+             "batch_paper_ids": paper_ids, "batch_cell_max_chars": cell_max_chars},
+            validator=lambda value: validate_batch_draft(value, expected_ids, cell_max_chars),
         )
-        output.generation_mode = "ai"
-        output.warnings = []
-        return output
+        rows = {row.paper_id: row for row in output.papers}
+        return BatchSummary(
+            overall_takeaway=output.overall_takeaway,
+            papers=[BatchPaperSummary(title=context["title"], **rows[context["paper_id"]].model_dump())
+                    for context in paper_contexts],
+            generation_mode="ai",
+        )
 
     def answer_question(
         self,
@@ -904,7 +944,7 @@ def validate_candidate_selection(selection: CandidateSelection, offered_ids: set
         raise EvidenceValidationError("Candidate selection contains duplicate IDs")
 
 
-def validate_batch_output(output: BatchSummary, expected_ids: set[str]) -> None:
+def validate_batch_output(output: BatchSummary | BatchComparisonDraft, expected_ids: set[str]) -> None:
     actual_ids = [paper.paper_id for paper in output.papers]
     if len(actual_ids) != len(set(actual_ids)):
         raise EvidenceValidationError("Batch output contains duplicate paper IDs")
@@ -913,6 +953,14 @@ def validate_batch_output(output: BatchSummary, expected_ids: set[str]) -> None:
         missing = sorted(expected_ids - actual_set)
         invented = sorted(actual_set - expected_ids)
         raise EvidenceValidationError(f"Batch output ID mismatch; missing={missing}, invented={invented}")
+
+
+def validate_batch_draft(output: BatchComparisonDraft, expected_ids: set[str], cell_max_chars: int) -> None:
+    validate_batch_output(output, expected_ids)
+    for paper in output.papers:
+        for field in BATCH_COMPARISON_FIELDS:
+            if len(getattr(paper, field)) > cell_max_chars:
+                raise EvidenceValidationError(f"Batch cell {paper.paper_id}.{field} exceeds {cell_max_chars} characters")
 
 
 STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
@@ -1074,6 +1122,12 @@ STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
         "suggested_experiments": [],
         "suggested_research_directions": [],
     },
+    "BatchComparisonDraft": {
+        "overall_takeaway": "The papers use different evaluations; direct superiority is not established.",
+        "papers": [{"paper_id": "paper-1", **{
+            field: "Not reported in supplied evidence." for field in BATCH_COMPARISON_FIELDS
+        }}],
+    },
 }
 
 
@@ -1088,6 +1142,15 @@ def invoke_structured_json(
     schema_name = output_model.__name__
     schema_value = output_model.model_json_schema()
     example_value = json.loads(json.dumps(STRUCTURED_OUTPUT_EXAMPLES[schema_name]))
+    if schema_name == "BatchComparisonDraft" and payload.get("batch_paper_ids"):
+        paper_ids = payload["batch_paper_ids"]
+        schema_value["properties"]["papers"].update(minItems=len(paper_ids), maxItems=len(paper_ids))
+        row_schema = schema_value["$defs"]["BatchPaperDraft"]["properties"]
+        row_schema["paper_id"]["enum"] = paper_ids
+        for field in BATCH_COMPARISON_FIELDS:
+            row_schema[field]["maxLength"] = payload["batch_cell_max_chars"]
+        example_row = example_value["papers"][0]
+        example_value["papers"] = [{**example_row, "paper_id": paper_id} for paper_id in paper_ids]
     evidence_ids = payload.get("evidence_ids")
     if evidence_ids:
         # Reflect the actual request's evidence in the schema and example. Static
@@ -1246,7 +1309,7 @@ def output_budget(schema_name: str) -> int:
         return settings.ai_chat_max_output_tokens
     if schema_name in {"ResearchBriefDraft", "ResearchBrief"}:
         return settings.ai_synthesis_max_output_tokens
-    if schema_name == "BatchSummary":
+    if schema_name in {"BatchSummary", "BatchComparisonDraft"}:
         return settings.ai_batch_max_output_tokens
     return settings.ai_plan_max_output_tokens
 

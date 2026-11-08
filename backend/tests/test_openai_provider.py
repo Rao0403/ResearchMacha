@@ -161,7 +161,7 @@ def test_missing_key_is_detected_without_network(monkeypatch):
 
 @pytest.mark.parametrize("output_model", [
     ai.ResearchPlan, ai.CandidateSelection, ai.PaperSummaryDraft,
-    ai.ResearchBriefDraft, ai.BatchSummary, ai.ChatDraft,
+    ai.ResearchBriefDraft, ai.BatchSummary, ai.BatchComparisonDraft, ai.ChatDraft,
 ])
 def test_all_generation_operations_send_strict_schemas_and_their_own_budgets(output_model):
     bodies = []
