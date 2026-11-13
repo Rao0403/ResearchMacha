@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { GenerationNotice } from "../components/GenerationNotice";
 import { ResearchCitationLink } from "../components/ResearchCitationLink";
+import { LibraryPaperPicker } from "../components/LibraryPaperPicker";
 import { ActionButton, Alert, Field, PageHeader, StatusBadge, Surface } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import {
@@ -14,6 +15,7 @@ import {
   getResearchWorkflowStatus,
   retryJob,
   renameProject, saveProjectSelection,
+  addProjectPapers, createLibraryResearch, generateProjectBrief,
 } from "../lib/api";
 import type {
   AgentRun,
@@ -54,6 +56,7 @@ export function ResearchWorkflowPage() {
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
   const [busyItem, setBusyItem] = useState<string | null>(null);
+  const [libraryIds, setLibraryIds] = useState<string[]>([]);
   const projectRef = useRef(project);
   const projectRevisionRef = useRef(0);
   const actionControllerRef = useRef<AbortController | null>(null);
@@ -68,6 +71,7 @@ export function ResearchWorkflowPage() {
     projectRef.current = null;
     setProject(null);
     setSelected(new Set());
+    setLibraryIds([]);
     setQuestion("");
     setMessage(null);
     setSubmitting(false);
@@ -106,6 +110,21 @@ export function ResearchWorkflowPage() {
     } catch (error) {
       if (!controller.signal.aborted) setMessage(getErrorMessage(error));
     } finally { if (actionControllerRef.current === controller) setBusyItem(null); }
+  }
+
+  async function updateEvidence(generate = false) {
+    if (!project) return;
+    const id = project.id;
+    const controller = new AbortController();
+    actionControllerRef.current?.abort(); actionControllerRef.current = controller;
+    setBusyItem("evidence"); setMessage(null);
+    try {
+      const next = generate ? await generateProjectBrief(id, controller.signal)
+        : await addProjectPapers(id, libraryIds, project.selection_version ?? 0, controller.signal);
+      if (controller.signal.aborted || projectRef.current?.id !== id) return;
+      projectRef.current = next; setProject(next); setLibraryIds([]);
+    } catch (error) { if (!controller.signal.aborted) setMessage(getErrorMessage(error)); }
+    finally { if (actionControllerRef.current === controller) setBusyItem(null); }
   }
 
   useEffect(() => {
@@ -167,12 +186,14 @@ export function ResearchWorkflowPage() {
     setProject(null);
     setSelected(new Set());
     try {
-      const nextProject = await createResearchWorkflow(question.trim(), controller.signal);
+      const nextProject = libraryIds.length ? await createLibraryResearch(question.trim(), libraryIds, controller.signal)
+        : await createResearchWorkflow(question.trim(), controller.signal);
       if (controller.signal.aborted || projectRevisionRef.current !== revision) {
         return;
       }
       projectRef.current = nextProject;
       setProject(nextProject);
+      setLibraryIds([]);
       setSelected(new Set(nextProject.candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.id)));
       navigate(`/projects/${nextProject.id}`);
     } catch (error) {
@@ -320,6 +341,8 @@ export function ResearchWorkflowPage() {
               rows={4}
             />
           </Field>
+          <LibraryPaperPicker selected={libraryIds} onChange={setLibraryIds} maximum={5} disabled={submitting} />
+          <p>{libraryIds.length ? "This run will synthesize the selected library papers without discovery or reanalysis." : "Leave the library selection empty to discover papers on arXiv."}</p>
           <ActionButton type="submit" busy={submitting} busyLabel="Finding papers...">Start research</ActionButton>
         </form>
       </Surface>}
@@ -329,6 +352,10 @@ export function ResearchWorkflowPage() {
         <label>Project name<input value={projectName} maxLength={255} onChange={(e) => setProjectName(e.target.value)} /></label>
         <ActionButton type="button" variant="secondary" disabled={!projectName.trim()} busy={busyItem === "name"} onClick={() => void saveWorkspace("name")}>Save name</ActionButton>
         <Link to="/projects">All projects</Link>
+        <LibraryPaperPicker key={project.id} selected={libraryIds} onChange={setLibraryIds} maximum={Math.max(0, 5-project.papers.length)} exclude={project.papers.map((p) => p.id)} disabled={busyItem !== null || pollingEnabled} />
+        <ActionButton type="button" variant="secondary" disabled={libraryIds.length === 0 || pollingEnabled} busy={busyItem === "evidence"} onClick={() => void updateEvidence()}>Add selected library papers</ActionButton>
+        {project.papers.length > 0 && <ActionButton type="button" disabled={libraryIds.length > 0 || pollingEnabled || project.blocking_items.length > 0} busy={busyItem === "evidence"} onClick={() => void updateEvidence(true)}>Generate updated brief</ActionButton>}
+        {project.synthesis_json && project.status === "awaiting_approval" && <p role="status">The evidence set changed. The previous brief remains visible until you generate an update.</p>}
       </Surface>}
 
       <WorkflowProgress status={project?.status} busy={submitting} />

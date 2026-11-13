@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { GenerationNotice } from "../components/GenerationNotice";
+import { LibraryPaperPicker } from "../components/LibraryPaperPicker";
 import { ActionButton, Alert, EmptyState, Field, PageHeader, StatusBadge, Surface } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { generateComparison, getComparison, getComparisonStatus, listComparisons, retryComparisonPaper, updateComparison, uploadComparison } from "../lib/api";
@@ -24,20 +25,21 @@ export function SavedComparisonsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [libraryIds, setLibraryIds] = useState<string[]>([]);
   const current = useRef(comparison);
   current.current = comparison;
   const loadController = useRef<AbortController | null>(null);
   const actionController = useRef<AbortController | null>(null);
   const uploadToken = useRef(crypto.randomUUID());
   const generationToken = useRef(crypto.randomUUID());
-  const dirty = Boolean(comparison && (name !== comparison.name || goal !== comparison.goal));
+  const dirty = Boolean(comparison && (name !== comparison.name || goal !== comparison.goal || libraryIds.length > 0));
 
   useEffect(() => {
     if (comparisonId && current.current?.id === comparisonId) return;
     loadController.current?.abort(); actionController.current?.abort();
     const controller = new AbortController();
     loadController.current = controller;
-    current.current = null; setComparison(null); setError(null); setLoading(true); setBusy(false);
+    current.current = null; setComparison(null); setError(null); setLoading(true); setBusy(false); setLibraryIds([]);
     if (comparisonId) {
       getComparison(comparisonId, controller.signal).then((data) => {
         if (controller.signal.aborted) return;
@@ -76,12 +78,13 @@ export function SavedComparisonsPage() {
     event.preventDefault();
     const input = event.currentTarget.elements.namedItem("files") as HTMLInputElement | null;
     const files = Array.from(input?.files ?? []);
-    if (files.length < 2 || files.length > 10) { setError("Choose 2 to 10 PDFs."); return; }
+    if (files.length + libraryIds.length < 2 || files.length + libraryIds.length > 10) { setError("Choose 2 to 10 papers across uploads and library."); return; }
     const form = new FormData();
     files.forEach((file) => form.append("files", file));
     form.set("name", name);
     form.set("goal", goal);
     form.set("request_id", uploadToken.current);
+    form.set("library_paper_ids", JSON.stringify(libraryIds));
     const controller = new AbortController();
     actionController.current?.abort(); actionController.current = controller;
     setBusy(true); setError(null);
@@ -89,6 +92,7 @@ export function SavedComparisonsPage() {
       const data = await uploadComparison(form, controller.signal);
       if (controller.signal.aborted) return;
       current.current = data; setComparison(data); setName(data.name); setGoal(data.goal);
+      setLibraryIds([]);
       navigate(`/comparisons/${data.id}`);
     } catch (e) { if (!controller.signal.aborted) setError(message(e)); }
     finally { if (actionController.current === controller) setBusy(false); }
@@ -103,9 +107,10 @@ export function SavedComparisonsPage() {
     try {
       const data = kind === "generate" ? await generateComparison(original.id, original.version, generationToken.current, controller.signal)
         : kind === "retry" ? await retryComparisonPaper(original.id, paperId!, controller.signal)
-        : await updateComparison(original.id, { name, goal, version: original.version, paper_ids: original.papers.filter((p) => kind !== "remove" || p.id !== paperId).map((p) => p.id) }, controller.signal);
+        : await updateComparison(original.id, { name, goal, version: original.version, paper_ids: [...original.papers.filter((p) => kind !== "remove" || p.id !== paperId).map((p) => p.id), ...libraryIds] }, controller.signal);
       if (controller.signal.aborted || current.current?.id !== original.id) return;
       current.current = data; setComparison(data); setName(data.name); setGoal(data.goal);
+      setLibraryIds([]);
       generationToken.current = crypto.randomUUID();
     } catch (e) { if (!controller.signal.aborted) setError(message(e)); }
     finally { if (actionController.current === controller) setBusy(false); }
@@ -119,6 +124,7 @@ export function SavedComparisonsPage() {
     {!comparisonId && <Surface><form className="batch-upload-form" onSubmit={upload}>
       <Field label="Comparison name" htmlFor="comparison-name"><input id="comparison-name" name="name" value={name} maxLength={255} onChange={(e) => { setName(e.target.value); uploadToken.current = crypto.randomUUID(); }} required /></Field>
       <Field label="PDF collection" htmlFor="batch-files"><input id="batch-files" name="files" type="file" accept="application/pdf,.pdf" multiple onChange={() => { uploadToken.current = crypto.randomUUID(); }} /></Field>
+      <LibraryPaperPicker selected={libraryIds} onChange={(ids) => { setLibraryIds(ids); uploadToken.current = crypto.randomUUID(); }} disabled={busy} />
       <Field label="Comparison goal" htmlFor="batch-goal"><textarea id="batch-goal" name="goal" value={goal} minLength={3} maxLength={2000} onChange={(e) => { setGoal(e.target.value); uploadToken.current = crypto.randomUUID(); }} required /></Field>
       <ActionButton type="submit" busy={busy} busyLabel="Saving comparison...">Upload and compare</ActionButton>
     </form></Surface>}
@@ -142,7 +148,8 @@ export function SavedComparisonsPage() {
       <Surface><h2>Comparison papers</h2>{comparison.papers.map((p) => <div className="paper-status-row" key={p.id}>
         <Link to={`/reader/${p.id}`}>{p.title}</Link><StatusBadge status={p.status} />
         {comparison.papers.length > 2 && <ActionButton type="button" variant="secondary" size="compact" disabled={busy} onClick={() => void action("remove", p.id)}>Remove from comparison</ActionButton>}
-      </div>)}</Surface>
+      </div>)}<LibraryPaperPicker key={comparison.id} selected={libraryIds} onChange={setLibraryIds} exclude={comparison.papers.map((p) => p.id)} maximum={10-comparison.papers.length} disabled={busy} />
+      {libraryIds.length > 0 && <p>Use Save details above to add these papers. Updating the comparison is a separate action.</p>}</Surface>
       {comparison.blocking_items.map((blocker) => <Alert key={blocker.paper_id} tone="danger" title={blocker.title}><p>{blocker.error || "Paper analysis failed."}</p>
         {blocker.job_id && <ActionButton type="button" variant="secondary" busy={busy} onClick={() => void action("retry", blocker.paper_id)}>Retry paper analysis</ActionButton>}
       </Alert>)}

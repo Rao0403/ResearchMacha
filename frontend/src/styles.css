@@ -2009,3 +2009,9 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+.library-picker { display: grid; gap: var(--space-3, 12px); margin-block: 1rem; }
+.library-picker-list { max-height: 20rem; overflow: auto; }
+.library-picker-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-bottom: 1px solid var(--border-color, #ddd); }
+.library-picker-row input { width: auto; flex: 0 0 auto; }
+.library-picker-row span { min-width: 0; overflow-wrap: anywhere; }
+.library-picker-row small { display: block; font-weight: normal; }

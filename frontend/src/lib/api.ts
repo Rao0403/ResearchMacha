@@ -157,6 +157,16 @@ export function newChatSession(id: string, signal?: AbortSignal) {
   return request<ReaderWorkspace>(`/papers/${id}/chat-sessions`, { method: "POST", signal });
 }
 
+export function createLibraryResearch(question: string, paperIds: string[], signal?: AbortSignal) {
+  return request<ResearchProject>("/research-workflows/from-library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, paper_ids: paperIds }), signal });
+}
+export function addProjectPapers(id: string, paperIds: string[], version: number, signal?: AbortSignal) {
+  return request<ResearchProject>(`/research-workflows/${id}/papers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paper_ids: paperIds, version }), signal });
+}
+export function generateProjectBrief(id: string, signal?: AbortSignal) {
+  return request<ResearchProject>(`/research-workflows/${id}/synthesize`, { method: "POST", signal });
+}
+
 export function listComparisons(signal?: AbortSignal) {
   return request<SavedComparison[]>("/comparisons", { signal });
 }

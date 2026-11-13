@@ -9,6 +9,7 @@ import { BatchSummaryPage } from "./BatchSummaryPage";
 vi.mock("../lib/api", () => ({
   listComparisons: vi.fn(), getComparison: vi.fn(), getComparisonStatus: vi.fn(),
   uploadComparison: vi.fn(), updateComparison: vi.fn(), generateComparison: vi.fn(), retryComparisonPaper: vi.fn(),
+  listPapers: vi.fn(),
 }));
 
 const timestamp = "2026-11-13T00:00:00Z";
@@ -59,6 +60,21 @@ describe("Saved comparisons", () => {
     expect(router.state.location.pathname).toBe("/comparisons/comparison");
     expect(api.uploadComparison).toHaveBeenCalledTimes(1);
     expect(api.generateComparison).not.toHaveBeenCalled();
+  });
+
+  it("creates a comparison from library papers with no PDF uploads", async () => {
+    vi.mocked(api.listPapers).mockResolvedValue(saved().papers);
+    vi.mocked(api.uploadComparison).mockResolvedValue(saved());
+    open();
+    const user=userEvent.setup();
+    await user.click(screen.getByRole("button",{name:"Choose from library"}));
+    await user.click(await screen.findByRole("checkbox",{name:/Retrieval Study/}));
+    await user.click(screen.getByRole("checkbox",{name:/Fine-tuning Study/}));
+    await user.click(screen.getByRole("button",{name:"Upload and compare"}));
+    await screen.findByRole("table",{name:"Paper comparison matrix"});
+    const form=vi.mocked(api.uploadComparison).mock.calls[0][0];
+    expect(form.getAll("files")).toEqual([]);
+    expect(JSON.parse(form.get("library_paper_ids") as string)).toEqual(["paper-0","paper-1"]);
   });
 
   it("reopens saved output and saves a changed goal without automatically generating", async () => {
