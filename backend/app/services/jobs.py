@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal
-from app.models.paper import Job, ResearchProject
+from app.models.paper import Job, ResearchProject, Comparison, ComparisonPaper
 from app.models.states import JobStatus
 
 logger = logging.getLogger("research_macha.jobs")
@@ -49,6 +49,7 @@ def recover_interrupted_jobs(
     now = utc_now()
     requeued = 0
     failed = 0
+    comparison_ids=set()
     with session_factory() as db:
         query = db.query(Job).filter(Job.status == JobStatus.RUNNING)
         if all_previous_workers:
@@ -56,6 +57,7 @@ def recover_interrupted_jobs(
         else:
             query = query.filter(Job.lease_expires_at < now)
         for job in query.with_for_update().all():
+            if job.comparison_id: comparison_ids.add(job.comparison_id)
             if job.attempt_count >= config.job_max_reclaims:
                 job.status = JobStatus.FAILED
                 job.error_message = "Job interrupted too many times and exceeded the reclaim limit."
@@ -70,6 +72,9 @@ def recover_interrupted_jobs(
                 requeued += 1
             db.add(job)
         db.commit()
+        if comparison_ids:
+            from app.services.comparisons import reconcile_comparison
+            for ident in comparison_ids: reconcile_comparison(db,ident)
     return requeued, failed
 
 
@@ -85,6 +90,7 @@ def claim_next_job(
         statement = (
             select(Job)
             .where(Job.status == JobStatus.QUEUED)
+            .where(or_(Job.job_type != "comparison", Job.comparison_id.in_(select(Comparison.id).where(Comparison.status == "queued"))))
             .order_by(Job.created_at.asc(), Job.id.asc())
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -135,6 +141,11 @@ def fail_running_job(
             return
         job.status = JobStatus.FAILED
         job.error_message = str(error)[:10000]
+        if job.comparison_id:
+            comparison=db.get(Comparison,job.comparison_id)
+            if comparison and comparison.generation == job.requested_generation:
+                comparison.status="failed"
+                comparison.error_message=str(error)[:10000]
         job.finished_at = utc_now()
         job.lease_expires_at = None
         db.add(job)
@@ -178,6 +189,9 @@ def dispatch_job(
             from app.services.research import process_synthesis_job
 
             process_synthesis_job(job_id, heartbeat=heartbeat, session_factory=session_factory)
+        elif job_type == "comparison":
+            from app.services.comparisons import process_comparison_job
+            process_comparison_job(job_id,heartbeat=heartbeat,session_factory=session_factory)
         else:
             raise RuntimeError(f"Unsupported job type: {job_type}")
     except Exception as exc:  # noqa: BLE001 - worker must persist terminal failure state
@@ -185,6 +199,12 @@ def dispatch_job(
         fail_running_job(job_id, exc, worker_id=worker_id, session_factory=session_factory)
     finally:
         reconcile_job_project(job_id, session_factory=session_factory)
+        with session_factory() as db:
+            job=db.get(Job,job_id)
+            if job and job.paper_id:
+                from app.services.comparisons import reconcile_comparison
+                for (ident,) in db.query(ComparisonPaper.comparison_id).filter_by(paper_id=job.paper_id).all():
+                    reconcile_comparison(db,ident)
 
 
 def reconcile_job_project(
@@ -226,6 +246,15 @@ class JobWorker:
             settings=self.settings,
             all_previous_workers=True,
         )
+        # An analysis may have committed just before the previous process stopped,
+        # before its dependent comparison was notified. Reconcile without model calls.
+        from app.services.comparisons import reconcile_comparison
+        with self.session_factory() as db:
+            ids = [ident for (ident,) in db.query(Comparison.id).filter(
+                Comparison.status.in_(["waiting_for_papers", "blocked", "queued", "running"])
+            ).all()]
+            for ident in ids:
+                reconcile_comparison(db, ident)
         for index in range(max(1, self.settings.job_worker_concurrency)):
             thread = threading.Thread(
                 target=self._run,

@@ -90,6 +90,7 @@ class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    comparison_id: str | None = None
     paper_id: str | None
     project_id: str | None
     candidate_id: str | None
