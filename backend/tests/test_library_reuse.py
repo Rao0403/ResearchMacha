@@ -1,7 +1,7 @@
 from io import BytesIO
 from pypdf import PdfWriter
 
-from app.models.paper import Job, Paper, ResearchProject, ResearchProjectPaper
+from app.models.paper import Job, Paper, ResearchCandidate, ResearchProject, ResearchProjectPaper
 from app.services import research
 from app.services.jobs import reconcile_job_project
 
@@ -34,6 +34,47 @@ def test_library_only_research_queues_synthesis_not_analysis(api_client, db_sess
     assert response.status_code == 200
     assert response.json()["status"] == "synthesis_queued"
     assert [j.job_type for j in db_session.query(Job).all()] == ["synthesis"]
+
+
+def test_library_edits_cannot_change_active_evidence_or_exceed_combined_limit(api_client,db_session):
+    papers=[ready_paper(db_session,str(index)) for index in range(2)]
+    project=ResearchProject(question="How effective is adaptation?",status="synthesizing")
+    db_session.add(project);db_session.commit()
+    url=f"/api/research-workflows/{project.id}/papers"
+    assert api_client.post(url,json={"paper_ids":[p.id for p in papers],"version":0}).status_code==409
+    project.status="awaiting_approval";db_session.commit()
+    assert api_client.post(url,json={"paper_ids":[p.id for p in papers],"version":0}).status_code==200
+    for index in range(4):
+        db_session.add(ResearchCandidate(project_id=project.id,arxiv_id=f"2401.0000{index}",title="Discovered",authors=[],abstract="",pdf_url="",entry_url="",score=1,rationale="",selected=True))
+    db_session.commit()
+    response=api_client.post(f"/api/research-workflows/{project.id}/approve",json={"candidate_ids":[]})
+    assert response.status_code==400 and "five evidence" in response.json()["detail"]
+    assert db_session.query(Job).count()==0
+
+
+def test_ready_arxiv_import_reuses_analysis_without_external_calls(db_session,monkeypatch):
+    paper=ready_paper(db_session)
+    paper.source_key="arxiv:2401.00001";paper.arxiv_id="2401.00001"
+    project=ResearchProject(question="How effective is this method?",status="awaiting_approval")
+    db_session.add(project);db_session.flush()
+    candidate=ResearchCandidate(project_id=project.id,arxiv_id=paper.arxiv_id,title="Existing",authors=[],abstract="",pdf_url="",entry_url="",score=1,rationale="",selected=True)
+    db_session.add(candidate);db_session.commit()
+    def unexpected(*args,**kwargs): raise AssertionError("Reuse must not fetch metadata, download or analyze")
+    monkeypatch.setattr(research,"fetch_arxiv_entry",unexpected)
+    monkeypatch.setattr(research,"enqueue_analysis_job",unexpected)
+    research.import_selected_candidates(db_session,project.id,[candidate.id])
+    job=db_session.query(Job).filter_by(job_type="import").one()
+    job.status="running";db_session.commit()
+    class Borrowed:
+        def __getattr__(self,name): return getattr(db_session,name)
+        def close(self): pass
+    research.process_import_job(job.id,session_factory=Borrowed)
+    assert job.status=="completed" and job.payload["reused_analysis"] is True
+    assert db_session.query(Paper).count()==1
+    assert db_session.query(Job).filter_by(job_type="analysis").count()==0
+    project=db_session.get(ResearchProject,project.id);project.status="done";db_session.commit()
+    research.import_selected_candidates(db_session,project.id,[candidate.id])
+    assert db_session.get(ResearchProject,project.id).status=="done"
 
 
 def test_mixed_comparison_validates_library_before_upload(api_client, db_session):

@@ -6,6 +6,17 @@ export interface Citation {
   title?: string | null;
 }
 
+export interface PersonalNote {
+  id: string;
+  paper_id: string;
+  body: string;
+  page: number | null;
+  excerpt: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export type GenerationMode = "ai" | "extractive" | "mock" | "unknown_legacy";
 export type WarningMessage = string;
 

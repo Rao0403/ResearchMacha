@@ -56,6 +56,26 @@ test("renders a deterministic blocked workflow", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Exclude" })).toBeVisible();
 });
 
+test("follows comparison evidence and saves a personal note that survives reopening", async ({ page }) => {
+  await page.goto("/comparisons/saved-comparison");
+  await page.getByRole("link",{name:"Open Fixture paper: ready, page 1: Measured improvement on the fixed benchmark."}).click();
+  await expect(page).toHaveURL(/\/reader\/paper-ready\?page=1$/);
+  await expect(page.getByRole("heading",{name:"Selected source passage"})).toBeVisible();
+  // The first reader visit loads PDF.js and its worker while other browser tests run.
+  await expect(page.locator(".pdf-canvas-shell canvas")).toBeVisible({timeout:15000});
+  await page.getByRole("tab",{name:"My Notes",exact:true}).click();
+  await page.getByLabel("Your note").fill("My portfolio evidence note");
+  await page.getByRole("button",{name:"Use selected source passage"}).click();
+  await page.getByRole("button",{name:"Save note",exact:true}).click();
+  await expect(page.getByText("Note saved to your workspace.")).toBeVisible();
+  await page.reload();
+  await page.getByRole("tab",{name:"My Notes",exact:true}).click();
+  await expect(page.getByText("My portfolio evidence note",{exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"Back to evidence"})).toHaveAttribute("href","/comparisons/saved-comparison");
+  const results=await new AxeBuilder({page}).analyze();
+  expect(results.violations.filter((v) => ["serious","critical"].includes(v.impact ?? ""))).toEqual([]);
+});
+
 test("has no serious automated accessibility violations on primary workspaces", async ({ page }) => {
   for (const path of ["/", "/reader", "/batch-summary", "/library"]) {
     await page.goto(path);

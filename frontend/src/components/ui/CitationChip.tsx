@@ -27,7 +27,7 @@ export function CitationChip({ citation, paperId, paperTitle, detailed = false }
     <Link
       className={className}
       to={`/reader/${paperId}?page=${citation.page}`}
-      state={{ sourcePaperId: paperId, sourceExcerpt: citation.excerpt, sourceReturnTo: location.pathname + location.search }}
+      state={{ sourcePaperId: paperId, sourcePage: citation.page, sourceExcerpt: citation.excerpt, sourceReturnTo: location.pathname + location.search }}
       title={`Open ${paperTitle ?? "source paper"} on page ${citation.page}`}
       aria-label={`Open ${label}: ${citation.excerpt}`}
     >

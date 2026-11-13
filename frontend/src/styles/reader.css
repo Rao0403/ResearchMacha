@@ -143,7 +143,17 @@
 
 .reader-side-panel .ui-tab-list {
   padding: 0 var(--space-2);
+  overflow-x: auto;
 }
+
+.personal-notes { height: 100%; overflow-y: auto; padding: var(--space-4); }
+.personal-notes h2 { font-size: 1.1rem; }
+.personal-notes h3 { font-size: 0.95rem; }
+.personal-note-editor { display: grid; gap: var(--space-2); margin-block: var(--space-4); }
+.personal-note { padding-block: var(--space-4); border-top: 1px solid var(--color-border); overflow-wrap: anywhere; }
+.personal-note-body { white-space: pre-wrap; }
+.personal-note small { display: block; color: var(--color-text-muted); }
+.personal-note blockquote { border-left: 2px solid var(--color-border-strong); padding-left: var(--space-3); margin: var(--space-3) 0; white-space: pre-wrap; }
 
 .reader-side-panel .ui-tab {
   flex: 1 1 auto;

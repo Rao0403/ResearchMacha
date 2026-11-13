@@ -4,12 +4,13 @@ import { Link, useLocation, useParams, useSearchParams } from "react-router-dom"
 import { GenerationNotice } from "../components/GenerationNotice";
 import { PdfViewer } from "../components/PdfViewer";
 import { SourcePassage } from "../components/SourcePassage";
+import { PersonalNotes } from "../components/PersonalNotes";
 import { ActionButton, Alert, EmptyState, PageHeader, StatusBadge, Tabs } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper, getReaderWorkspace, saveReadingState, newChatSession } from "../lib/api";
 import type { ChatMessage, Highlight, PaperDetail, PaperSummary, PaperSummaryResponse } from "../types";
 
-type ReaderTab = "notes" | "highlights" | "chat";
+type ReaderTab = "notes" | "highlights" | "chat" | "my-notes";
 type SummarySectionKey =
   | "problem_or_hypothesis"
   | "approach"
@@ -29,7 +30,7 @@ const summaryLabels: Array<[SummarySectionKey, string]> = [
 
 export function ReaderPage() {
   const location = useLocation();
-  const source = location.state as { sourcePaperId?: string; sourceExcerpt?: string; sourceReturnTo?: string } | null;
+  const source = location.state as { sourcePaperId?: string; sourcePage?: number; sourceExcerpt?: string; sourceReturnTo?: string } | null;
   const { paperId: routePaperId } = useParams();
   const [searchParams] = useSearchParams();
   const requestedPage = parsePageNumber(searchParams.get("page"));
@@ -427,6 +428,9 @@ export function ReaderPage() {
   const visibleSummary = summaryPayload?.summary ?? paper?.summary ?? null;
   const visibleHighlights = summaryPayload?.highlights ?? paper?.highlights ?? [];
   const readerTabs = [
+    { id: "my-notes", label: "My Notes", content: paper ? <PersonalNotes key={paper.id} paperId={paper.id} currentPage={currentPage}
+      selectedExcerpt={source?.sourcePaperId === paper.id ? source.sourceExcerpt : undefined}
+      selectedPage={source?.sourcePaperId === paper.id ? source.sourcePage : undefined} onPageClick={jumpToCitation} /> : <p>Open a paper to write personal notes.</p> },
     {
       id: "notes",
       label: "AI Notes",

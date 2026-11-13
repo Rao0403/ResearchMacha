@@ -1,6 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 
-import type { Job, LibraryPaper, ResearchProject, SavedComparison } from "../../src/types";
+import type { Job, LibraryPaper, PersonalNote, ResearchProject, SavedComparison } from "../../src/types";
 
 const now = "2026-10-02T10:00:00Z";
 
@@ -41,6 +41,8 @@ export const savedComparison: SavedComparison = {
       main_idea: "Evaluate adaptation.", problem_or_hypothesis: "Does adaptation help?",
       experiments: "Controlled benchmark.", models_and_datasets: "A fixed evaluation set.",
       results: "Measured improvement.", conclusions: "Evidence is limited to this benchmark.",
+      limitations: "A single benchmark.", comparability: "Fixed evaluation conditions.",
+      citations: { results: [{paper_id:id,title:index===0 ? papersByState[0].title : "Second evidence study",page:1,chunk_id:`source-${index}`,excerpt:"Measured improvement on the fixed benchmark."}] },
     })),
   },
 };
@@ -105,9 +107,35 @@ export const blockedProject: ResearchProject = {
 };
 
 export async function installApiFixtures(page: Page) {
+  const notes: PersonalNote[] = [];
+  const readerPaper = { ...papersByState[0], chunks: [], highlights: [] };
+  const blankPdf = "JVBERi0xLjMKJeLjz9MKMSAwIG9iago8PAovUHJvZHVjZXIgKHB5cGRmKQo+PgplbmRvYmoKMiAwIG9iago8PAovVHlwZSAvUGFnZXMKL0NvdW50IDEKL0tpZHMgWyA0IDAgUiBdCj4+CmVuZG9iagozIDAgb2JqCjw8Ci9UeXBlIC9DYXRhbG9nCi9QYWdlcyAyIDAgUgo+PgplbmRvYmoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUmVzb3VyY2VzIDw8Cj4+Ci9NZWRpYUJveCBbIDAuMCAwLjAgMzAwIDQwMCBdCi9QYXJlbnQgMiAwIFIKPj4KZW5kb2JqCnhyZWYKMCA1CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMDU0IDAwMDAwIG4gCjAwMDAwMDAxMTMgMDAwMDAgbiAKMDAwMDAwMDE2MiAwMDAwMCBuIAp0cmFpbGVyCjw8Ci9TaXplIDUKL1Jvb3QgMyAwIFIKL0luZm8gMSAwIFIKPj4Kc3RhcnR4cmVmCjI1NgolJUVPRgo=";
   await page.route("http://localhost:8000/api/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    const readerBase = "/api/papers/paper-ready";
+    if (request.method() === "GET" && url.pathname === readerBase) {
+      await json(route, readerPaper); return;
+    }
+    if (request.method() === "GET" && url.pathname === `${readerBase}/summary`) {
+      await json(route, {paper:readerPaper,highlights:[],summary:{
+        problem_or_hypothesis:"An adaptation problem.",approach:"A controlled method.",experiments:"A fixed benchmark.",results:"Measured improvement.",conclusion:"Qualified evidence.",limitations_or_notes:"A single benchmark.",section_citations:{},generation_mode:"ai",warning:null,
+      }}); return;
+    }
+    if (request.method() === "GET" && url.pathname === `${readerBase}/workspace`) {
+      await json(route, {page:1,version:0,active_session_id:null,sessions:[],messages:[]}); return;
+    }
+    if (request.method() === "GET" && url.pathname === `${readerBase}/file`) {
+      await route.fulfill({contentType:"application/pdf",body:Buffer.from(blankPdf,"base64")}); return;
+    }
+    if (request.method() === "GET" && url.pathname === `${readerBase}/notes`) {
+      await json(route, notes); return;
+    }
+    if (request.method() === "POST" && url.pathname === `${readerBase}/notes`) {
+      const payload=request.postDataJSON();
+      const note={...payload,paper_id:"paper-ready",version:1,created_at:now,updated_at:now};
+      notes.push(note); await json(route,note); return;
+    }
 
     if (request.method() === "GET" && ["/api/comparisons", "/api/research-workflows"].includes(url.pathname)) {
       await json(route, []);

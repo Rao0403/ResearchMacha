@@ -14,6 +14,7 @@ import type {
   UploadPaperResponse,
   ReaderWorkspace,
   SavedComparison,
+  PersonalNote,
 } from "../types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000/api";
@@ -155,6 +156,18 @@ export function saveReadingState(id: string, page: number, version: number, sess
 }
 export function newChatSession(id: string, signal?: AbortSignal) {
   return request<ReaderWorkspace>(`/papers/${id}/chat-sessions`, { method: "POST", signal });
+}
+
+export function listPersonalNotes(id: string, signal?: AbortSignal) {
+  return request<PersonalNote[]>(`/papers/${id}/notes`, { signal });
+}
+export function savePersonalNote(paperId: string, note: { id: string; body: string; page: number | null; excerpt: string | null; version?: number }, signal?: AbortSignal) {
+  return request<PersonalNote>(`/papers/${paperId}/notes${note.version ? `/${note.id}` : ""}`, {
+    method: note.version ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(note), signal,
+  });
+}
+export function deletePersonalNote(paperId: string, note: PersonalNote, signal?: AbortSignal) {
+  return request<{ deleted: string }>(`/papers/${paperId}/notes/${note.id}?version=${note.version}`, { method: "DELETE", signal });
 }
 
 export function createLibraryResearch(question: string, paperIds: string[], signal?: AbortSignal) {

@@ -2,16 +2,105 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from pydantic import field_validator
+from uuid import UUID
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.paper import ChatMessage, ChatSession, Paper, PaperReadingState
+from app.models.paper import ChatMessage, ChatSession, Paper, PaperReadingState, PaperNote
 from app.schemas.paper import ChatMessageRead
 from app.services.papers import get_paper_or_404
 
 router = APIRouter()
+
+
+class NoteContent(BaseModel):
+    body: str = Field(min_length=1, max_length=20_000)
+    page: int | None = Field(default=None, ge=1)
+    excerpt: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("body")
+    @classmethod
+    def nonempty_body(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Write a note before saving")
+        return value
+
+
+class NoteCreate(NoteContent):
+    id: UUID
+
+
+class NoteUpdate(NoteContent):
+    version: int = Field(ge=1)
+
+
+def note_json(note: PaperNote) -> dict:
+    return {"id": note.id, "paper_id": note.paper_id, "body": note.body, "page": note.page,
+            "excerpt": note.excerpt, "version": note.version, "created_at": note.created_at, "updated_at": note.updated_at}
+
+
+def validate_note_page(paper: Paper, page: int | None) -> None:
+    if page is None:
+        return
+    try:
+        count = len(PdfReader(paper.pdf_path).pages)
+    except Exception as error:
+        raise HTTPException(422, "Cannot attach a page while the PDF is unavailable") from error
+    if page > count:
+        raise HTTPException(422, "Note page is outside this PDF")
+
+
+def scoped_note(db: Session, paper_id: str, note_id: str) -> PaperNote:
+    note = db.query(PaperNote).filter_by(id=note_id, paper_id=paper_id).with_for_update().populate_existing().one_or_none()
+    if note is None:
+        raise HTTPException(404, "Note does not belong to this paper")
+    return note
+
+
+@router.get("/papers/{paper_id}/notes")
+def list_notes(paper_id: str, db: Session = Depends(get_db)):
+    get_paper_or_404(db, paper_id)
+    return [note_json(note) for note in db.query(PaperNote).filter_by(paper_id=paper_id).order_by(PaperNote.updated_at.desc(), PaperNote.id).all()]
+
+
+@router.post("/papers/{paper_id}/notes")
+def create_note(paper_id: str, payload: NoteCreate, db: Session = Depends(get_db)):
+    paper = db.scalar(select(Paper).where(Paper.id == paper_id).with_for_update())
+    if paper is None:
+        raise HTTPException(404, "Paper not found")
+    existing = db.get(PaperNote, str(payload.id))
+    if existing is not None:
+        if existing.paper_id != paper_id or any(getattr(existing, field) != getattr(payload, field) for field in ("body", "page", "excerpt")):
+            raise HTTPException(409, "Note already exists with different content; reopen it before editing")
+        return note_json(existing)
+    validate_note_page(paper, payload.page)
+    note = PaperNote(id=str(payload.id), paper_id=paper_id, **payload.model_dump(exclude={"id"}))
+    db.add(note); db.commit()
+    return note_json(note)
+
+
+@router.put("/papers/{paper_id}/notes/{note_id}")
+def update_note(paper_id: str, note_id: str, payload: NoteUpdate, db: Session = Depends(get_db)):
+    note = scoped_note(db, paper_id, note_id)
+    if note.version != payload.version:
+        raise HTTPException(409, "This note changed in another request. Your draft was not saved; reload saved notes before resolving it.")
+    validate_note_page(get_paper_or_404(db, paper_id), payload.page)
+    note.body, note.page, note.excerpt = payload.body, payload.page, payload.excerpt
+    note.version += 1
+    db.commit()
+    return note_json(note)
+
+
+@router.delete("/papers/{paper_id}/notes/{note_id}")
+def delete_note(paper_id: str, note_id: str, version: int = Query(ge=1), db: Session = Depends(get_db)):
+    note = scoped_note(db, paper_id, note_id)
+    if note.version != version:
+        raise HTTPException(409, "This note changed. Reload it before deleting.")
+    db.delete(note); db.commit()
+    return {"deleted": note_id}
 
 
 class ReadingUpdate(BaseModel):

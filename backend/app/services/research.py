@@ -74,6 +74,10 @@ def attach_library_papers(db: Session, project_id: str, paper_ids: list[str], ve
         raise HTTPException(404, "Research project not found")
     if project.selection_version != version:
         raise HTTPException(409, "Evidence changed. Reload this project before adding papers.")
+    if project.status in {"importing", "analyzing", "synthesis_queued", "synthesizing"} or db.query(Job.id).filter(
+        Job.project_id == project_id, Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING])
+    ).first():
+        raise HTTPException(409, "Wait for the current workflow to finish before changing its evidence")
     papers = reusable_papers(db, paper_ids, maximum=5)
     existing = {link.paper_id for link in project.papers}
     if len(existing | set(paper_ids)) > 5:
@@ -201,13 +205,15 @@ def project_blocking_items(project: ResearchProject) -> list[dict[str, Any]]:
         if paper is not None and paper.status == "failed" and not any(
             blocker["target_type"] == "paper" and blocker["target_id"] == paper_id for blocker in blockers
         ):
+            db = object_session(project)
+            shared_job = db.query(Job).filter_by(paper_id=paper_id, job_type="analysis").order_by(Job.created_at.desc()).first() if db is not None else None
             blockers.append(
                 {
                     "target_type": "paper",
                     "target_id": paper_id,
                     "title": paper.title,
-                    "job_id": None,
-                    "error": paper.analysis_warning or "Paper analysis failed.",
+                    "job_id": shared_job.id if shared_job is not None else None,
+                    "error": (shared_job.error_message if shared_job is not None else None) or paper.analysis_warning or "Paper analysis failed.",
                 }
             )
     return blockers
@@ -444,14 +450,23 @@ def import_selected_candidates(
     if len(existing_approved_ids | set(candidate_ids)) > 5:
         raise HTTPException(status_code=400, detail="A project can have at most five approved candidates")
 
+    from app.services.arxiv import normalize_arxiv_id
+    linked_papers = db.query(Paper).join(ResearchProjectPaper).filter(ResearchProjectPaper.project_id == project_id).all()
+    evidence_keys = {f"arxiv:{normalize_arxiv_id(p.arxiv_id)}" if p.arxiv_id else f"paper:{p.id}" for p in linked_papers}
+    evidence_keys.update(f"arxiv:{normalize_arxiv_id(candidates_by_id[cid].arxiv_id)}" for cid in existing_approved_ids | set(candidate_ids) if cid in candidates_by_id)
+    if len(evidence_keys) > 5:
+        raise HTTPException(400, "A project can have at most five evidence papers across library and discovered sources")
+
     for candidate in project_candidates:
         candidate.selected = candidate.id in (existing_approved_ids | set(candidate_ids))
 
+    new_imports = False
     for candidate in candidates:
         candidate.selected = True
         key = f"import:{project_id}:{candidate.id}"
         job = db.query(Job).filter(Job.idempotency_key == key).one_or_none()
         if job is None:
+            new_imports = True
             job = Job(
                 project_id=project_id,
                 candidate_id=candidate.id,
@@ -462,7 +477,10 @@ def import_selected_candidates(
             )
             db.add(job)
 
-    project.status = "importing"
+    if new_imports:
+        if project.synthesis_json or project.status in {"synthesis_queued", "synthesizing"}:
+            _supersede_synthesis(db, project)
+        project.status = "importing"
     db.add(project)
     try:
         db.commit()
