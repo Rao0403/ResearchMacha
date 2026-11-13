@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.ai import AIProviderError, EvidenceValidationError, build_extractive_batch, get_ai_provider, validate_batch_output
+from app.ai import AIProviderError, EvidenceRegistry, EvidenceValidationError, build_extractive_batch, get_ai_provider, validate_batch_output, validate_batch_evidence
 from app.core.config import get_settings
 from app.core.database import SessionLocal
 from app.models.paper import Comparison, ComparisonPaper, Job, Paper
@@ -179,6 +179,7 @@ def process_comparison_job(job_id: str, *, heartbeat: Callable[[], bool] | None=
         try:
             output=get_ai_provider().summarize_batch(job.payload["goal"],snapshot)
             validate_batch_output(output,{p["paper_id"] for p in snapshot})
+            validate_batch_evidence(output, EvidenceRegistry.from_paper_contexts(snapshot))
         except (AIProviderError,EvidenceValidationError) as error:
             output=build_extractive_batch(job.payload["goal"],snapshot,str(error))
         if heartbeat and not heartbeat(): raise RuntimeError("Comparison lease was lost")

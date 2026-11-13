@@ -116,6 +116,9 @@ class BatchPaperSummary(BaseModel):
     models_and_datasets: str
     results: str
     conclusions: str
+    limitations: str = "Not reported in supplied evidence."
+    comparability: str = "Not reported in supplied evidence."
+    citations: dict[str, list[EvidenceCitation]] = Field(default_factory=dict)
 
 
 class BatchSummary(BaseModel):
@@ -127,8 +130,21 @@ class BatchSummary(BaseModel):
 
 BATCH_COMPARISON_FIELDS = (
     "main_idea", "problem_or_hypothesis", "experiments",
-    "models_and_datasets", "results", "conclusions",
+    "models_and_datasets", "results", "conclusions", "limitations", "comparability",
 )
+
+
+class BatchFieldSources(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    main_idea: list[str] = Field(max_length=1)
+    problem_or_hypothesis: list[str] = Field(max_length=1)
+    experiments: list[str] = Field(max_length=1)
+    models_and_datasets: list[str] = Field(max_length=1)
+    results: list[str] = Field(max_length=1)
+    conclusions: list[str] = Field(max_length=1)
+    limitations: list[str] = Field(max_length=1)
+    comparability: list[str] = Field(max_length=1)
 
 
 class BatchPaperDraft(BaseModel):
@@ -141,6 +157,9 @@ class BatchPaperDraft(BaseModel):
     models_and_datasets: str = Field(min_length=1, max_length=360)
     results: str = Field(min_length=1, max_length=360)
     conclusions: str = Field(min_length=1, max_length=360)
+    limitations: str = Field(min_length=1, max_length=360)
+    comparability: str = Field(min_length=1, max_length=360)
+    sources: BatchFieldSources
 
 
 class BatchComparisonDraft(BaseModel):
@@ -350,6 +369,7 @@ class MockProvider(AIProvider):
                     models_and_datasets="Review the paper notes for model, dataset, or benchmark mentions.",
                     results=summary[:420],
                     conclusions=summary[:420],
+                    citations={field: [first_context_citation(context)] for field in BATCH_COMPARISON_FIELDS if context.get("chunks")},
                 )
             )
         return BatchSummary(
@@ -524,7 +544,18 @@ class OpenAIProvider(AIProvider):
         expected_ids = set(paper_ids)
         if not paper_ids or len(expected_ids) != len(paper_ids):
             raise EvidenceValidationError("Batch comparison requires distinct supplied papers")
-        cell_max_chars = min(360, max(120, 1800 // len(paper_ids)))
+        cell_max_chars = min(300, max(100, 1400 // len(paper_ids)))
+        # Short request-local labels reduce output tokens; stored citations use real IDs.
+        labelled_contexts = []
+        evidence = {}
+        for context in paper_contexts:
+            chunks = []
+            for chunk in context.get("chunks", [])[:4]:
+                label = f"e{len(evidence)+1}"
+                visible = {**chunk, "text": str(chunk["text"])[:1200], "paper_id": context["paper_id"], "title": context["title"]}
+                evidence[label] = visible
+                chunks.append({**visible, "id": label})
+            labelled_contexts.append({**context, "chunks": chunks})
         output = invoke_structured_json(
             self.chat_model,
             BatchComparisonDraft,
@@ -533,18 +564,25 @@ class OpenAIProvider(AIProvider):
             "Keep the overall takeaway to at most three short sentences and 600 characters. "
             "Preserve relevant numbers, datasets, and baselines; state 'Not reported in supplied evidence' when missing. "
             "Acknowledge incompatible experimental settings. Do not repeat entire summaries across cells, "
-            "include Markdown tables, or add extra papers. Titles and generation metadata are added by the application.",
+            "include Markdown tables, or add extra papers. For each cell choose one supporting evidence label "
+            "from that same paper in sources. If unsupported, use exactly 'Not reported in supplied evidence.' "
+            "and an empty sources list. Do not cite the stored summary as primary evidence. "
+            "Limitations must describe study constraints; comparability must describe its tasks, metrics, "
+            "datasets or evaluation conditions that affect fair comparison. Never declare an overall winner "
+            "across incompatible evaluations. Titles, excerpts and generation metadata are added by the application.",
             "Goal: {goal}\nAllowed paper IDs: {batch_paper_ids}\nMaximum characters per cell: {batch_cell_max_chars}"
             "\nPaper evidence:\n{context}",
-            {"goal": goal, "context": format_paper_contexts(paper_contexts),
-             "batch_paper_ids": paper_ids, "batch_cell_max_chars": cell_max_chars},
-            validator=lambda value: validate_batch_draft(value, expected_ids, cell_max_chars),
+            {"goal": goal, "context": format_paper_contexts(labelled_contexts),
+             "batch_paper_ids": paper_ids, "batch_cell_max_chars": cell_max_chars, "batch_evidence_ids": list(evidence)},
+            validator=lambda value: validate_batch_draft(value, expected_ids, cell_max_chars, evidence),
         )
         rows = {row.paper_id: row for row in output.papers}
         return BatchSummary(
             overall_takeaway=output.overall_takeaway,
-            papers=[BatchPaperSummary(title=context["title"], **rows[context["paper_id"]].model_dump())
-                    for context in paper_contexts],
+            papers=[BatchPaperSummary(title=context["title"], **rows[context["paper_id"]].model_dump(exclude={"sources"}),
+                citations={field: [EvidenceCitation(paper_id=context["paper_id"],title=context["title"],
+                    **comparison_citation(evidence[label], getattr(rows[context["paper_id"]],field))) for label in getattr(rows[context["paper_id"]].sources,field)]
+                    for field in BATCH_COMPARISON_FIELDS}) for context in paper_contexts],
             generation_mode="ai",
         )
 
@@ -940,12 +978,44 @@ def validate_batch_output(output: BatchSummary | BatchComparisonDraft, expected_
         raise EvidenceValidationError(f"Batch output ID mismatch; missing={missing}, invented={invented}")
 
 
-def validate_batch_draft(output: BatchComparisonDraft, expected_ids: set[str], cell_max_chars: int) -> None:
+def validate_batch_draft(output: BatchComparisonDraft, expected_ids: set[str], cell_max_chars: int, evidence: dict | None = None) -> None:
     validate_batch_output(output, expected_ids)
     for paper in output.papers:
         for field in BATCH_COMPARISON_FIELDS:
             if len(getattr(paper, field)) > cell_max_chars:
                 raise EvidenceValidationError(f"Batch cell {paper.paper_id}.{field} exceeds {cell_max_chars} characters")
+            if evidence is not None:
+                labels = getattr(paper.sources, field)
+                if not labels and not is_missing_batch_evidence(getattr(paper, field)):
+                    raise EvidenceValidationError(f"Batch cell {paper.paper_id}.{field} requires a source or an explicit missing-evidence note")
+                for label in labels:
+                    if label not in evidence or evidence[label]["paper_id"] != paper.paper_id:
+                        raise EvidenceValidationError(f"Batch cell {paper.paper_id}.{field} selected unknown or wrong-paper evidence: {label}")
+
+
+def is_missing_batch_evidence(text: str) -> bool:
+    return text.strip().rstrip(".").casefold() == "not reported in supplied evidence"
+
+
+def validate_batch_evidence(output: BatchSummary, registry: EvidenceRegistry) -> None:
+    for paper in output.papers:
+        if set(paper.citations) - set(BATCH_COMPARISON_FIELDS):
+            raise EvidenceValidationError("Unknown comparison citation field")
+        for field in BATCH_COMPARISON_FIELDS:
+            citations = paper.citations.get(field, [])
+            validate_citations(citations, registry, require_paper_identity=True,
+                               require_at_least_one=output.generation_mode == "ai" and not is_missing_batch_evidence(getattr(paper, field)))
+            if any(c.paper_id != paper.paper_id for c in citations):
+                raise EvidenceValidationError("Comparison citation belongs to another row's paper")
+
+
+def comparison_citation(chunk: dict[str, Any], claim: str) -> dict[str, str | int]:
+    # Choose a verbatim source sentence near the cell's terminology; never synthesize a quotation.
+    text = " ".join(str(chunk["text"]).split())
+    terms = set(re.findall(r"[a-z0-9]{3,}", claim.casefold())) - {"the", "and", "for", "with", "this", "that", "from"}
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    sentence = max(sentences, key=lambda s: len(terms & set(re.findall(r"[a-z0-9]{3,}", s.casefold()))))
+    return {"page": chunk["page_start"], "excerpt": sentence[:300], "chunk_id": chunk["id"]}
 
 
 STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
@@ -1111,7 +1181,7 @@ STRUCTURED_OUTPUT_EXAMPLES: dict[str, dict[str, Any]] = {
         "overall_takeaway": "The papers use different evaluations; direct superiority is not established.",
         "papers": [{"paper_id": "paper-1", **{
             field: "Not reported in supplied evidence." for field in BATCH_COMPARISON_FIELDS
-        }}],
+        }, "sources": {field: [] for field in BATCH_COMPARISON_FIELDS}}],
     },
 }
 
@@ -1134,6 +1204,12 @@ def invoke_structured_json(
         row_schema["paper_id"]["enum"] = paper_ids
         for field in BATCH_COMPARISON_FIELDS:
             row_schema[field]["maxLength"] = payload["batch_cell_max_chars"]
+        evidence_ids = payload.get("batch_evidence_ids", [])
+        for source in schema_value["$defs"]["BatchFieldSources"]["properties"].values():
+            if evidence_ids:
+                source["items"] = {"type": "string", "enum": evidence_ids}
+            else:
+                source["maxItems"] = 0
         example_row = example_value["papers"][0]
         example_value["papers"] = [{**example_row, "paper_id": paper_id} for paper_id in paper_ids]
     evidence_ids = payload.get("evidence_ids")

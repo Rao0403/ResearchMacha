@@ -146,6 +146,12 @@ class BatchSummaryRequest(BaseModel):
     goal: str = Field(default="Summarize the uploaded research papers.", min_length=3, max_length=2000)
 
 
+class MultiPaperCitationRead(Citation):
+    paper_id: str
+    title: str
+    chunk_id: str
+
+
 class BatchPaperSummaryRead(BaseModel):
     paper_id: str
     title: str
@@ -155,6 +161,9 @@ class BatchPaperSummaryRead(BaseModel):
     models_and_datasets: str
     results: str
     conclusions: str
+    limitations: str = "Not reported in supplied evidence."
+    comparability: str = "Not reported in supplied evidence."
+    citations: dict[str, list[MultiPaperCitationRead]] = Field(default_factory=dict)
 
 
 class BatchSummaryResponse(BaseModel):

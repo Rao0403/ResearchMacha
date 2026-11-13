@@ -20,6 +20,7 @@ from app.ai import (
     deterministic_research_plan,
     get_ai_provider,
     validate_batch_output,
+    validate_batch_evidence,
     validate_brief_evidence,
     validate_candidate_selection,
 )
@@ -1093,6 +1094,7 @@ def summarize_batch_papers(db: Session, paper_ids: list[str], goal: str) -> Batc
     try:
         output = get_ai_provider().summarize_batch(goal, contexts)
         validate_batch_output(output, requested_ids)
+        validate_batch_evidence(output, EvidenceRegistry.from_paper_contexts(contexts))
         return output
     except (AIProviderError, EvidenceValidationError) as exc:
         warning = f"AI batch summary unavailable; stored summaries used: {exc}"

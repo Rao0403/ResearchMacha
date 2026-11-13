@@ -37,7 +37,7 @@ def setup_provider(monkeypatch):
             return result
     monkeypatch.setattr(comparisons,"get_ai_provider",lambda:Provider())
     monkeypatch.setattr(comparisons,"build_paper_contexts_by_ids",lambda db,ids,query: [
-        {"paper_id":pid,"title":db.get(Paper,pid).title,"summary":"Stored summary", "chunks":[{"id":"chunk","page_start":1,"page_end":1,"text":"Actual source."}]} for pid in ids])
+        {"paper_id":pid,"title":db.get(Paper,pid).title,"summary":"Stored summary", "chunks":[{"id":f"{pid}-chunk","page_start":1,"page_end":1,"text":"Actual source."}]} for pid in ids])
     return calls
 
 
