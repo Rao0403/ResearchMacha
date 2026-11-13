@@ -57,6 +57,7 @@ class Job(Base):
     paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=True)
     project_id: Mapped[str | None] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=True, index=True)
     candidate_id: Mapped[str | None] = mapped_column(ForeignKey("research_candidates.id", ondelete="CASCADE"), nullable=True, index=True)
+    comparison_id: Mapped[str | None] = mapped_column(ForeignKey("comparisons.id", ondelete="CASCADE"), nullable=True, index=True)
     job_type: Mapped[str] = mapped_column(String(32), default="analysis")
     status: Mapped[str] = mapped_column(String(32), default="queued")
     idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, default=default_legacy_job_key)
@@ -76,6 +77,7 @@ class Job(Base):
     paper: Mapped[Paper | None] = relationship(back_populates="jobs")
     project: Mapped["ResearchProject | None"] = relationship(back_populates="jobs")
     candidate: Mapped["ResearchCandidate | None"] = relationship(back_populates="jobs")
+    comparison: Mapped["Comparison | None"] = relationship(back_populates="jobs")
 
 
 class PaperChunk(Base):
@@ -144,11 +146,15 @@ class ChatSession(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
     paper: Mapped[Paper] = relationship(back_populates="chat_sessions")
-    messages: Mapped[list["ChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+    messages: Mapped[list["ChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan", order_by="ChatMessage.position, ChatMessage.created_at, ChatMessage.id")
 
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
+    __table_args__ = (
+        UniqueConstraint("session_id", "position", name="uq_chat_message_position"),
+        UniqueConstraint("session_id", "request_id", "role", name="uq_chat_message_request_role"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("chat_sessions.id", ondelete="CASCADE"))
@@ -157,6 +163,10 @@ class ChatMessage(Base):
     citations: Mapped[list[dict[str, str | int]]] = mapped_column(JSON, default=list)
     generation_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="completed")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
@@ -167,6 +177,8 @@ class ResearchProject(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
     question: Mapped[str] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    selection_version: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
     generated_queries: Mapped[list[str]] = mapped_column(JSON, default=list)
     inclusion_criteria: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -278,3 +290,58 @@ class AgentStep(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
     run: Mapped[AgentRun] = relationship(back_populates="steps")
+
+
+class Comparison(Base):
+    __tablename__ = "comparisons"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
+    creation_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    name: Mapped[str] = mapped_column(String(255), default="Paper comparison")
+    goal: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    generation: Mapped[int] = mapped_column(Integer, default=0)
+    result_generation: Mapped[int] = mapped_column(Integer, default=0)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    evidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+    papers: Mapped[list["ComparisonPaper"]] = relationship(cascade="all, delete-orphan", order_by="ComparisonPaper.position")
+    jobs: Mapped[list[Job]] = relationship(back_populates="comparison")
+
+
+class ComparisonPaper(Base):
+    __tablename__ = "comparison_papers"
+    __table_args__ = (UniqueConstraint("comparison_id", "paper_id", name="uq_comparison_paper"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
+    comparison_id: Mapped[str] = mapped_column(ForeignKey("comparisons.id", ondelete="CASCADE"), index=True)
+    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    paper: Mapped[Paper] = relationship()
+
+
+class PaperReadingState(Base):
+    __tablename__ = "paper_reading_states"
+
+    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True)
+    page: Mapped[int] = mapped_column(Integer, default=1)
+    active_session_id: Mapped[str | None] = mapped_column(ForeignKey("chat_sessions.id", ondelete="SET NULL"), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class PaperNote(Base):
+    __tablename__ = "paper_notes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=default_id)
+    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), index=True)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
