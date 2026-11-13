@@ -43,7 +43,7 @@ from app.services.analysis import begin_job_phase, enqueue_analysis_job, finish_
 from app.services.arxiv import ArxivEntry, fetch_arxiv_entry, search_arxiv
 from app.services.fallbacks import record_fallback
 from app.services.memory import create_memory, latest_memories, memory_payload, retrieve_memories
-from app.services.papers import create_or_update_paper_from_arxiv
+from app.services.papers import create_or_update_paper_from_arxiv, reusable_papers
 from app.services.vector_store import get_vector_store
 from app.services.retrieval import retrieve_paper_chunks
 
@@ -65,6 +65,28 @@ def create_project(db: Session, question: str) -> ResearchProject:
 
 def list_projects(db: Session) -> list[ResearchProject]:
     return db.query(ResearchProject).order_by(ResearchProject.updated_at.desc()).all()
+
+
+def attach_library_papers(db: Session, project_id: str, paper_ids: list[str], version: int) -> ResearchProject:
+    project = db.scalar(select(ResearchProject).where(ResearchProject.id == project_id).with_for_update())
+    if project is None:
+        raise HTTPException(404, "Research project not found")
+    if project.selection_version != version:
+        raise HTTPException(409, "Evidence changed. Reload this project before adding papers.")
+    papers = reusable_papers(db, paper_ids, maximum=5)
+    existing = {link.paper_id for link in project.papers}
+    if len(existing | set(paper_ids)) > 5:
+        raise HTTPException(422, "A project supports at most five evidence papers")
+    additions = [paper for paper in papers if paper.id not in existing]
+    if additions:
+        _supersede_synthesis(db, project)
+        project.selection_version += 1
+        for paper in additions:
+            db.add(ResearchProjectPaper(project_id=project.id, paper_id=paper.id, role="evidence"))
+        # Saving an evidence set is free. Synthesis requires an explicit user action.
+        project.status = "awaiting_approval"
+        db.commit()
+    return get_project_or_404(db, project_id)
 
 
 def get_project_or_404(db: Session, project_id: str) -> ResearchProject:
@@ -479,10 +501,13 @@ def process_import_job(
         if candidate is None or project is None:
             raise RuntimeError("Import target no longer exists")
 
-        entry = fetch_arxiv_entry(candidate.arxiv_id)
+        from app.services.arxiv import normalize_arxiv_id
+        paper = db.query(Paper).filter_by(source_key=f"arxiv:{normalize_arxiv_id(candidate.arxiv_id)}").one_or_none()
+        if paper is None:
+            entry = fetch_arxiv_entry(candidate.arxiv_id)
+            paper, _ = create_or_update_paper_from_arxiv(db, entry)
         if heartbeat:
             heartbeat()
-        paper, _ = create_or_update_paper_from_arxiv(db, entry)
         link = db.query(ResearchProjectPaper).filter(
             ResearchProjectPaper.project_id == project.id,
             ResearchProjectPaper.paper_id == paper.id,
@@ -495,8 +520,8 @@ def process_import_job(
         db.commit()
         if heartbeat:
             heartbeat()
-        analysis_job = enqueue_analysis_job(db, paper.id, auto_reset=True)
-        if analysis_job.project_id is None:
+        analysis_job = None if paper.status in {"ready", "degraded"} else enqueue_analysis_job(db, paper.id, auto_reset=True)
+        if analysis_job is not None and analysis_job.project_id is None:
             analysis_job.project_id = project.id
             analysis_job.candidate_id = candidate.id
             db.add(analysis_job)
@@ -506,7 +531,8 @@ def process_import_job(
             job.finished_at = now()
             job.lease_expires_at = None
             payload = dict(job.payload or {})
-            payload["analysis_job_id"] = analysis_job.id
+            payload["analysis_job_id"] = analysis_job.id if analysis_job else None
+            payload["reused_analysis"] = analysis_job is None
             job.payload = payload
             db.add(job)
         project = db.get(ResearchProject, project.id)
@@ -595,6 +621,11 @@ def exclude_candidate(db: Session, project_id: str, candidate_id: str) -> Resear
     jobs = db.query(Job).filter(Job.project_id == project_id, Job.candidate_id == candidate_id).all()
     paper_ids = {job.paper_id for job in jobs if job.paper_id}
     for job in jobs:
+        if job.job_type == "analysis":
+            # Analysis belongs to the library paper, which may serve other workspaces.
+            job.project_id = None
+            job.candidate_id = None
+            continue
         if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
             job.status = JobStatus.CANCELLED
             job.warning_message = "Candidate was excluded from the project."
@@ -617,10 +648,8 @@ def exclude_candidate(db: Session, project_id: str, candidate_id: str) -> Resear
             Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
         ).all()
         for analysis_job in analysis_jobs:
-            analysis_job.status = JobStatus.CANCELLED
-            analysis_job.warning_message = "Paper was excluded with its candidate."
-            analysis_job.finished_at = now()
-            analysis_job.lease_expires_at = None
+            analysis_job.project_id = None
+            analysis_job.candidate_id = None
             db.add(analysis_job)
     db.delete(candidate)
     _supersede_synthesis(db, project)
@@ -645,6 +674,10 @@ def exclude_project_paper(db: Session, project_id: str, paper_id: str) -> Resear
         Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
     ).all()
     for job in jobs:
+        if job.job_type == "analysis":
+            job.project_id = None
+            job.candidate_id = None
+            continue
         job.status = JobStatus.CANCELLED
         job.warning_message = "Paper was excluded from the project."
         job.finished_at = now()

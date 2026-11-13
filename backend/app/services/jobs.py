@@ -214,8 +214,11 @@ def reconcile_job_project(
 ) -> None:
     with session_factory() as db:
         job = db.get(Job, job_id)
-        project_id = job.project_id if job is not None else None
-    if project_id:
+        project_ids = {job.project_id} if job is not None and job.project_id else set()
+        if job is not None and job.paper_id:
+            from app.models.paper import ResearchProjectPaper
+            project_ids.update(ident for (ident,) in db.query(ResearchProjectPaper.project_id).filter_by(paper_id=job.paper_id).all())
+    for project_id in project_ids:
         try:
             from app.services.research import reconcile_project
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
 from app.api.deps import get_db
 from app.schemas.research import (
@@ -15,6 +16,7 @@ from app.schemas.research import (
 )
 from app.services.research import (
     approve_research_workflow,
+    attach_library_papers,
     create_project,
     discover_candidates,
     get_project_or_404,
@@ -33,6 +35,30 @@ from app.services.research import (
 )
 
 router = APIRouter()
+
+
+class LibraryEvidenceRequest(BaseModel):
+    paper_ids: list[str] = Field(min_length=1, max_length=5)
+    version: int = Field(ge=0)
+
+
+class LibraryResearchRequest(ResearchProjectCreate):
+    paper_ids: list[str] = Field(min_length=1, max_length=5)
+
+
+@router.post("/research-workflows/from-library", response_model=ResearchProjectRead)
+def research_from_library(payload: LibraryResearchRequest, db: Session = Depends(get_db)):
+    from app.services.papers import reusable_papers
+    reusable_papers(db, payload.paper_ids, maximum=5)
+    project = create_project(db, payload.question)
+    project = attach_library_papers(db, project.id, payload.paper_ids, 0)
+    enqueue_synthesis_job(db, project.id)
+    return serialize_project(get_project_or_404(db, project.id))
+
+
+@router.post("/research-workflows/{project_id}/papers", response_model=ResearchProjectRead)
+def add_library_evidence(project_id: str, payload: LibraryEvidenceRequest, db: Session = Depends(get_db)):
+    return serialize_project(attach_library_papers(db, project_id, payload.paper_ids, payload.version))
 
 
 @router.get("/research-workflows", response_model=list[ProjectListRead])

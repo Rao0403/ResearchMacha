@@ -18,6 +18,19 @@ def get_paper_or_404(db: Session, paper_id: str) -> Paper:
     return paper
 
 
+def reusable_papers(db: Session, paper_ids: list[str], *, maximum: int = 10) -> list[Paper]:
+    """Validate the complete selection before creating links, files, or jobs."""
+    if not paper_ids or len(paper_ids) > maximum or len(set(paper_ids)) != len(paper_ids):
+        raise HTTPException(422, f"Select 1 to {maximum} distinct library papers")
+    papers = db.query(Paper).filter(Paper.id.in_(paper_ids)).order_by(Paper.id).with_for_update().all()
+    by_id = {paper.id: paper for paper in papers}
+    if set(by_id) != set(paper_ids):
+        raise HTTPException(404, "A selected library paper no longer exists")
+    if any(p.status not in {"ready", "degraded"} for p in papers):
+        raise HTTPException(409, "Wait for paper analysis or retry failed papers in the reader before reuse")
+    return [by_id[ident] for ident in paper_ids]
+
+
 def create_or_update_paper_from_arxiv(db: Session, entry: ArxivEntry) -> tuple[Paper, bool]:
     normalized_id = normalize_arxiv_id(entry.arxiv_id)
     title, authors = validate_paper_metadata(entry.title, entry.authors)

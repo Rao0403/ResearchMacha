@@ -48,9 +48,11 @@ def create_comparison(db: Session, *, name: str, goal: str, ids: list[str], requ
         return get_comparison(db, existing.id)
     validate_papers(db, ids)
     row = Comparison(creation_key=request_id, name=name, goal=goal)
-    db.add(row); db.flush()
-    row.papers = [ComparisonPaper(paper_id=ident, position=position) for position, ident in enumerate(ids)]
-    try: db.commit()
+    try:
+        db.add(row)
+        db.flush()
+        row.papers = [ComparisonPaper(paper_id=ident, position=position) for position, ident in enumerate(ids)]
+        db.commit()
     except IntegrityError:
         db.rollback()
         existing = db.query(Comparison).filter_by(creation_key=request_id).one_or_none()

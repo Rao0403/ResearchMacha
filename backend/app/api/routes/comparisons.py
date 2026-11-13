@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+import json
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.api.deps import get_db
@@ -32,8 +33,9 @@ def create_comparison(payload:ComparisonCreate,db:Session=Depends(get_db)):
 
 @router.post("/comparisons/upload")
 def upload_comparison(
-    files:list[UploadFile]=File(...), name:str=Form("Paper comparison",min_length=1,max_length=255),
+    files:list[UploadFile] | None=File(None), name:str=Form("Paper comparison",min_length=1,max_length=255),
     goal:str=Form(...,min_length=3,max_length=2000), request_id:str=Form(...,min_length=1,max_length=64),
+    library_paper_ids:str=Form("[]"),
     db:Session=Depends(get_db),
 ):
     if not name.strip() or len(goal.strip()) < 3:
@@ -43,10 +45,19 @@ def upload_comparison(
         if existing.goal != goal: raise HTTPException(409,"Request ID belongs to another comparison")
         service.generate_comparison(db,existing.id,request_id,existing.version)
         return service.serialize_comparison(db,service.get_comparison(db,existing.id))
-    if not 2 <= len(files) <= 10: raise HTTPException(422,"Choose 2 to 10 PDFs")
+    from app.services.papers import reusable_papers
+    try:
+        ids=json.loads(library_paper_ids)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(422,"Invalid library paper selection") from error
+    if not isinstance(ids,list) or any(not isinstance(ident,str) for ident in ids):
+        raise HTTPException(422,"Invalid library paper selection")
+    files=files or []
+    if not 2 <= len(files)+len(ids) <= 10: raise HTTPException(422,"Choose 2 to 10 papers")
+    if ids: reusable_papers(db,ids)
     from app.api.routes.papers import batch_upload_papers
-    uploaded=batch_upload_papers(files=files,db=db)
-    row=service.create_comparison(db,name=name,goal=goal,ids=[item.paper.id for item in uploaded.items],request_id=request_id)
+    uploaded=batch_upload_papers(files=files,db=db) if files else None
+    row=service.create_comparison(db,name=name,goal=goal,ids=[*ids, *([item.paper.id for item in uploaded.items] if uploaded else [])],request_id=request_id)
     return service.serialize_comparison(db,row)
 
 @router.get("/comparisons/{ident}/status")
