@@ -116,6 +116,8 @@ def serialize_project(project: ResearchProject) -> ResearchProjectRead:
         )
     return ResearchProjectRead(
         id=project.id,
+        name=project.name,
+        selection_version=project.selection_version,
         question=project.question,
         status=project.status,
         generated_queries=project.generated_queries or [],
@@ -418,6 +420,9 @@ def import_selected_candidates(
     }
     if len(existing_approved_ids | set(candidate_ids)) > 5:
         raise HTTPException(status_code=400, detail="A project can have at most five approved candidates")
+
+    for candidate in project_candidates:
+        candidate.selected = candidate.id in (existing_approved_ids | set(candidate_ids))
 
     for candidate in candidates:
         candidate.selected = True

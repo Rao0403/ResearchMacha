@@ -13,6 +13,24 @@ class ResearchProjectCreate(BaseModel):
     question: str = Field(min_length=10, max_length=2000)
 
 
+class ProjectRename(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class ProjectSelection(BaseModel):
+    candidate_ids: list[str] = Field(max_length=5)
+    version: int = Field(ge=0)
+
+
+class ProjectListRead(BaseModel):
+    id: str
+    name: str | None
+    question: str
+    status: str
+    paper_count: int
+    updated_at: datetime
+
+
 class ResearchPlanResponse(BaseModel):
     search_queries: list[str]
     inclusion_criteria: list[str]
@@ -92,6 +110,8 @@ class ResearchProjectStatusRead(BaseModel):
 
 class ResearchProjectRead(BaseModel):
     id: str
+    name: str | None = None
+    selection_version: int = 0
     question: str
     status: str
     generated_queries: list[str]

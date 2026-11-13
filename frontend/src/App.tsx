@@ -8,6 +8,7 @@ import { ProjectListPage } from "./pages/ProjectListPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ResearchWorkflowPage } from "./pages/ResearchWorkflowPage";
 import { SearchPage } from "./pages/SearchPage";
+import { SavedProjectsPage } from "./pages/SavedProjectsPage";
 
 const ReaderPage = lazy(() => import("./pages/ReaderPage").then((module) => ({ default: module.ReaderPage })));
 
@@ -27,6 +28,7 @@ export function App() {
           <span className="brand-name">ResearchMacha</span>
         </NavLink>
         <nav className="nav-links" aria-label="Primary navigation">
+          <NavLink to="/projects" className={({ isActive }) => navClass(isActive)} aria-label="Projects"><span className="nav-icon"><Files size={17} /></span><span className="nav-label">Projects</span></NavLink>
           <NavLink to="/" end className={({ isActive }) => navClass(isActive)} aria-label="Research">
             <span className="nav-icon">
               <Search size={17} />
@@ -58,6 +60,8 @@ export function App() {
         <Suspense fallback={<p className="shell-loading" role="status">Loading workspace...</p>}>
           <Routes>
             <Route path="/" element={<ResearchWorkflowPage />} />
+            <Route path="/projects" element={<SavedProjectsPage />} />
+            <Route path="/projects/:projectId" element={<ResearchWorkflowPage />} />
             <Route path="/reader" element={<ReaderPage />} />
             <Route path="/reader/:paperId" element={<ReaderPage />} />
             <Route path="/batch-summary" element={<BatchSummaryPage />} />

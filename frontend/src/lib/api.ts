@@ -175,6 +175,21 @@ export async function getResearchWorkflow(projectId: string, signal?: AbortSigna
   return request<ResearchProject>(`/research-workflows/${projectId}`, { signal });
 }
 
+export type SavedProject = Pick<ResearchProject, "id" | "name" | "question" | "status" | "updated_at"> & { paper_count: number };
+export function listSavedProjects(signal?: AbortSignal) {
+  return request<SavedProject[]>("/research-workflows", { signal });
+}
+export function renameProject(id: string, name: string, signal?: AbortSignal) {
+  return request<ResearchProject>(`/research-workflows/${id}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }), signal,
+  });
+}
+export function saveProjectSelection(id: string, candidateIds: string[], version: number, signal?: AbortSignal) {
+  return request<ResearchProject>(`/research-workflows/${id}/selection`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ candidate_ids: candidateIds, version }), signal,
+  });
+}
+
 export async function getResearchWorkflowStatus(projectId: string, signal?: AbortSignal): Promise<ResearchProjectStatus> {
   return request<ResearchProjectStatus>(`/research-workflows/${projectId}/status`, { signal });
 }

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { GenerationNotice } from "../components/GenerationNotice";
 import { ResearchCitationLink } from "../components/ResearchCitationLink";
@@ -13,6 +13,7 @@ import {
   getResearchWorkflow,
   getResearchWorkflowStatus,
   retryJob,
+  renameProject, saveProjectSelection,
 } from "../lib/api";
 import type {
   AgentRun,
@@ -42,6 +43,10 @@ const briefSections: Array<[keyof ResearchBrief, string]> = [
 ];
 
 export function ResearchWorkflowPage() {
+  const { projectId } = useParams();
+  const navigate = useNavigate();
+  const [projectName, setProjectName] = useState("");
+  const [selectionSaved, setSelectionSaved] = useState(true);
   const [question, setQuestion] = useState("");
   const [project, setProject] = useState<ResearchProject | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -53,6 +58,55 @@ export function ResearchWorkflowPage() {
   const projectRevisionRef = useRef(0);
   const actionControllerRef = useRef<AbortController | null>(null);
   projectRef.current = project;
+
+  useEffect(() => {
+    if (!projectId || projectRef.current?.id === projectId) return;
+    projectRevisionRef.current += 1;
+    actionControllerRef.current?.abort();
+    const controller = new AbortController();
+    actionControllerRef.current = controller;
+    projectRef.current = null;
+    setProject(null);
+    setSelected(new Set());
+    setQuestion("");
+    setMessage(null);
+    setSubmitting(false);
+    setApproving(false);
+    getResearchWorkflow(projectId, controller.signal).then((data) => {
+      if (controller.signal.aborted) return;
+      projectRef.current = data;
+      setProject(data);
+      setQuestion(data.question);
+      setProjectName(data.name || "");
+      setSelected(new Set(data.candidates.filter((c) => c.selected).map((c) => c.id)));
+      setSelectionSaved(true);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setMessage(getErrorMessage(error));
+    });
+    return () => controller.abort();
+  }, [projectId]);
+
+  async function saveWorkspace(kind: "name" | "selection") {
+    if (!project) return;
+    const id = project.id;
+    const controller = new AbortController();
+    actionControllerRef.current?.abort();
+    actionControllerRef.current = controller;
+    setBusyItem(kind);
+    setMessage(null);
+    try {
+      const updated = kind === "name"
+        ? await renameProject(id, projectName, controller.signal)
+        : await saveProjectSelection(id, Array.from(selected), project.selection_version ?? 0, controller.signal);
+      if (!controller.signal.aborted && projectRef.current?.id === id) {
+        projectRef.current = updated;
+        setProject(updated);
+        if (kind === "selection") setSelectionSaved(true);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) setMessage(getErrorMessage(error));
+    } finally { if (actionControllerRef.current === controller) setBusyItem(null); }
+  }
 
   useEffect(() => {
     return () => {
@@ -120,6 +174,7 @@ export function ResearchWorkflowPage() {
       projectRef.current = nextProject;
       setProject(nextProject);
       setSelected(new Set(nextProject.candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.id)));
+      navigate(`/projects/${nextProject.id}`);
     } catch (error) {
       if (!isAbortError(error) && projectRevisionRef.current === revision) {
         setMessage(getErrorMessage(error));
@@ -233,6 +288,8 @@ export function ResearchWorkflowPage() {
   }
 
   function toggleCandidate(candidateId: string) {
+    if (project?.status !== "awaiting_approval") return;
+    setSelectionSaved(false);
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(candidateId)) {
@@ -252,7 +309,7 @@ export function ResearchWorkflowPage() {
         description="Discover relevant papers, choose the evidence, and follow every synthesized claim back to its source."
       />
 
-      <Surface className="research-question-panel">
+      {!projectId && <Surface className="research-question-panel">
         <form className="research-question-form" onSubmit={handleSubmit}>
           <Field label="Research question" htmlFor="research-question" hint="Be specific about the domain, method, population, or outcome you want to investigate.">
             <textarea
@@ -265,7 +322,14 @@ export function ResearchWorkflowPage() {
           </Field>
           <ActionButton type="submit" busy={submitting} busyLabel="Finding papers...">Start research</ActionButton>
         </form>
-      </Surface>
+      </Surface>}
+      {projectId && !project && !message && <p role="status">Loading saved project...</p>}
+      {projectId && project && <Surface>
+        <p>{project.question}</p>
+        <label>Project name<input value={projectName} maxLength={255} onChange={(e) => setProjectName(e.target.value)} /></label>
+        <ActionButton type="button" variant="secondary" disabled={!projectName.trim()} busy={busyItem === "name"} onClick={() => void saveWorkspace("name")}>Save name</ActionButton>
+        <Link to="/projects">All projects</Link>
+      </Surface>}
 
       <WorkflowProgress status={project?.status} busy={submitting} />
       {message ? <Alert tone="danger" title="The workflow could not continue" role="alert"><p>{message}</p></Alert> : null}
@@ -321,6 +385,8 @@ export function ResearchWorkflowPage() {
           {project.status === "awaiting_approval" && project.candidates.length > 0 ? (
             <div className="approval-row">
               <p>{selected.size} papers selected. You can unselect weak matches before continuing.</p>
+              <ActionButton type="button" variant="secondary" disabled={selectionSaved || selected.size > 5} busy={busyItem === "selection"} onClick={() => void saveWorkspace("selection")}>Save selection</ActionButton>
+              <span role="status">{selectionSaved ? "Selection saved" : "Unsaved selection"}</span>
               <ActionButton
                 type="button"
                 onClick={() => void handleApprove()}

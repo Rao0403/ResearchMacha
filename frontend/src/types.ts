@@ -232,6 +232,8 @@ export interface ResearchMemory {
 
 export interface ResearchProject {
   id: string;
+  name?: string | null;
+  selection_version?: number;
   question: string;
   status: string;
   generated_queries: string[];

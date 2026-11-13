@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.schemas.research import (
+    ProjectListRead, ProjectRename, ProjectSelection,
     CandidateSelectionRequest,
     ResearchPlanResponse,
     ResearchProjectCreate,
@@ -31,6 +33,41 @@ from app.services.research import (
 )
 
 router = APIRouter()
+
+
+@router.get("/research-workflows", response_model=list[ProjectListRead])
+def saved_workflows(db: Session = Depends(get_db)):
+    return [ProjectListRead(id=p.id, name=p.name, question=p.question, status=p.status,
+                           paper_count=len(p.papers), updated_at=p.updated_at) for p in list_projects(db)]
+
+
+@router.patch("/research-workflows/{project_id}", response_model=ResearchProjectRead)
+def rename_workflow(project_id: str, payload: ProjectRename, db: Session = Depends(get_db)):
+    project = get_project_or_404(db, project_id)
+    if not payload.name.strip():
+        raise HTTPException(422, "Project name cannot be blank")
+    project.name = payload.name.strip()
+    db.commit()
+    return serialize_project(get_project_or_404(db, project_id))
+
+
+@router.put("/research-workflows/{project_id}/selection", response_model=ResearchProjectRead)
+def save_workflow_selection(project_id: str, payload: ProjectSelection, db: Session = Depends(get_db)):
+    from app.models.paper import ResearchProject, ResearchCandidate
+    project = db.scalar(select(ResearchProject).where(ResearchProject.id == project_id).with_for_update())
+    if project is None:
+        raise HTTPException(404, "Research project not found")
+    if project.status != "awaiting_approval" or project.selection_version != payload.version:
+        raise HTTPException(409, "Selection changed or approval has already started. Reload this project.")
+    candidates = db.query(ResearchCandidate).filter(ResearchCandidate.project_id == project_id).all()
+    selected = set(payload.candidate_ids)
+    if not selected <= {c.id for c in candidates}:
+        raise HTTPException(400, "Candidates do not belong to this project")
+    for candidate in candidates:
+        candidate.selected = candidate.id in selected
+    project.selection_version += 1
+    db.commit()
+    return serialize_project(get_project_or_404(db, project_id))
 
 
 @router.post("/research-workflows", response_model=ResearchProjectRead)

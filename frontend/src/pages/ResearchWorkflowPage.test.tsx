@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../lib/api";
@@ -15,6 +15,7 @@ vi.mock("../lib/api", () => ({
   getResearchWorkflow: vi.fn(),
   getResearchWorkflowStatus: vi.fn(),
   retryJob: vi.fn(),
+  renameProject: vi.fn(), saveProjectSelection: vi.fn(),
 }));
 
 const timestamp = "2026-01-01T00:00:00Z";
@@ -223,6 +224,16 @@ describe("ResearchWorkflowPage reliability controls", () => {
     expect(screen.getByText("The previous successful analysis was retained.")).toBeInTheDocument();
     const citation = screen.getByRole("link", { name: /Grounded Retrieval.*Page 7.*Retrieval improved grounding/i });
     expect(citation).toHaveAttribute("href", "/reader/paper-1?page=7");
+  });
+
+  it("reopens a permanent project URL without starting another research run", async () => {
+    vi.mocked(api.getResearchWorkflow).mockResolvedValue(project({ name: "Saved question" }));
+    render(<MemoryRouter initialEntries={["/projects/project-1"]}><Routes>
+      <Route path="/projects/:projectId" element={<ResearchWorkflowPage />} />
+    </Routes></MemoryRouter>);
+    expect(await screen.findByDisplayValue("Saved question")).toBeInTheDocument();
+    expect(api.createResearchWorkflow).not.toHaveBeenCalled();
+    expect(api.getResearchWorkflow).toHaveBeenCalledWith("project-1", expect.any(AbortSignal));
   });
 
   it("lets a researcher review and approve a candidate with accessible controls", async () => {
