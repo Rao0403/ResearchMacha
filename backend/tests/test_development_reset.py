@@ -22,7 +22,7 @@ def config(**changes):
     {"qdrant_collection": "unrelated"},
 ])
 def test_reset_rejects_unsafe_targets(changes):
-    values = {"database_url": "mysql+pymysql://root@127.0.0.1/research_macha", **changes}
+    values = {"database_url": "mysql+pymysql://root@127.0.0.1/research_macha", "vector_provider": "qdrant", **changes}
     with pytest.raises(ValueError):
         reset.validate_target(Settings(_env_file=None, **values))
 

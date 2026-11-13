@@ -14,9 +14,11 @@ It is built as a portfolio-grade MVP around explainable agentic RAG: LLMs handle
 
 ## Core Workflows
 
-- `Research`: type one research question, let the backend plan/search/select papers, approve the selected papers, then receive a cited research brief with findings, gaps, experiments, and research directions.
-- `Reader`: upload or open one PDF, read it in a PDF.js viewer beside structured notes, cited highlights, and grounded chat.
-- `Batch Summary`: upload one or more PDFs and get a comparison table covering main idea, problem/hypothesis, experiments, models/datasets, results, and conclusions.
+- `Research`: type one research question, let the backend plan/search/select papers, approve the selected papers, then receive a cited research brief with findings, gaps, experiments, and research directions. Reopen saved questions from `Projects`; naming a project or saving a selection does not start processing.
+- `Reader`: upload or open one PDF, read it in a PDF.js viewer beside structured notes, cited highlights, and grounded chat. Conversations and reading position are saved per paper; an explicit citation page takes precedence when opening a source link.
+- `Compare`: upload two to ten PDFs and get a saved comparison covering main idea, problem/hypothesis, experiments, models/datasets, results, and conclusions. The backend worker finishes processing after the tab closes. Reopening or saving edited details does not generate again; use `Update comparison` explicitly to replace a result.
+
+Saved projects use `/projects/{project_id}` and comparisons use `/comparisons/{comparison_id}`. These URLs reopen the local workspace's stored data; they are not public sharing links. Run the additive Alembic upgrade below when updating an existing checkout. Older comparison tables that existed only in browser state cannot be recovered.
 
 ![ResearchMacha demo walkthrough](docs/assets/demo-walkthrough.svg)
 

@@ -13,6 +13,7 @@ import type {
   ResearchProjectStatus,
   UploadPaperResponse,
   ReaderWorkspace,
+  SavedComparison,
 } from "../types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000/api";
@@ -154,6 +155,28 @@ export function saveReadingState(id: string, page: number, version: number, sess
 }
 export function newChatSession(id: string, signal?: AbortSignal) {
   return request<ReaderWorkspace>(`/papers/${id}/chat-sessions`, { method: "POST", signal });
+}
+
+export function listComparisons(signal?: AbortSignal) {
+  return request<SavedComparison[]>("/comparisons", { signal });
+}
+export function getComparison(id: string, signal?: AbortSignal) {
+  return request<SavedComparison>(`/comparisons/${id}`, { signal });
+}
+export function getComparisonStatus(id: string, signal?: AbortSignal) {
+  return request<{ id: string; status: string; generation: number; updated_at: string; ready_count: number }>(`/comparisons/${id}/status`, { signal });
+}
+export function uploadComparison(form: FormData, signal?: AbortSignal) {
+  return request<SavedComparison>("/comparisons/upload", { method: "POST", body: form, signal });
+}
+export function updateComparison(id: string, value: { name: string; goal: string; paper_ids: string[]; version: number }, signal?: AbortSignal) {
+  return request<SavedComparison>(`/comparisons/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value), signal });
+}
+export function generateComparison(id: string, version: number, requestId: string, signal?: AbortSignal) {
+  return request<SavedComparison>(`/comparisons/${id}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version, request_id: requestId }), signal });
+}
+export function retryComparisonPaper(id: string, paperId: string, signal?: AbortSignal) {
+  return request<SavedComparison>(`/comparisons/${id}/retry-paper/${paperId}`, { method: "POST", signal });
 }
 
 export function getPdfUrl(paperId: string): string {

@@ -7,6 +7,8 @@ const statusTones: Record<string, StatusTone> = {
   completed: "success",
   done: "success",
   queued: "warning",
+  waiting_for_papers: "warning",
+  running: "info",
   pending: "warning",
   processing: "warning",
   importing: "warning",

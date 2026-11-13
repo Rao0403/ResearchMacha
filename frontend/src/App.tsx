@@ -41,7 +41,7 @@ export function App() {
             </span>
             <span className="nav-label">Reader</span>
           </NavLink>
-          <NavLink to="/batch-summary" className={({ isActive }) => navClass(isActive)} aria-label="Compare">
+          <NavLink to="/comparisons" className={({ isActive }) => navClass(isActive)} aria-label="Compare">
             <span className="nav-icon">
               <Files size={17} />
             </span>
@@ -65,6 +65,8 @@ export function App() {
             <Route path="/reader" element={<ReaderPage />} />
             <Route path="/reader/:paperId" element={<ReaderPage />} />
             <Route path="/batch-summary" element={<BatchSummaryPage />} />
+            <Route path="/comparisons" element={<BatchSummaryPage />} />
+            <Route path="/comparisons/:comparisonId" element={<BatchSummaryPage />} />
             <Route path="/library" element={<LibraryPage />} />
             <Route path="/papers/:paperId" element={<ReaderPage />} />
             <Route path="/debug/projects" element={<ProjectListPage />} />

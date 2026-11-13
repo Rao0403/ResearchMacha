@@ -14,6 +14,7 @@ from app.models.paper import Comparison, ComparisonPaper, Job, Paper
 from app.models.states import JobStatus
 from app.schemas.paper import JobRead, LibraryPaperRead
 from app.services.analysis import begin_job_phase, now
+from app.services.fallbacks import clear_fallback_events, pop_fallback_events
 from app.services.research import build_paper_contexts_by_ids
 
 
@@ -142,6 +143,7 @@ def serialize_comparison(db: Session, row: Comparison, *, include_result=True) -
 
 
 def process_comparison_job(job_id: str, *, heartbeat: Callable[[], bool] | None=None, session_factory=SessionLocal) -> None:
+    clear_fallback_events()
     with session_factory() as db:
         job = db.get(Job, job_id)
         if job is None or job.status != JobStatus.RUNNING: return
@@ -165,8 +167,10 @@ def process_comparison_job(job_id: str, *, heartbeat: Callable[[], bool] | None=
                 paper=db.get(Paper,pid)
                 if paper.status not in {"ready","degraded"}: raise RuntimeError("Paper analysis changed before comparison generation")
                 snapshot.append({**by_id[pid],"chunks":by_id[pid]["chunks"][:4],"analysis_generation":paper.analysis_generation,
-                                 "authors":paper.authors,"year":paper.year,"arxiv_id":paper.arxiv_id,"analysis_mode":paper.analysis_mode})
-            job.payload={**job.payload,"evidence_snapshot":snapshot}
+                                 "authors":paper.authors,"year":paper.year,"arxiv_id":paper.arxiv_id,"analysis_mode":paper.analysis_mode,
+                                 "paper_status":paper.status,"analysis_warning":paper.analysis_warning})
+            retrieval_warnings=[event["reason"] for event in pop_fallback_events()]
+            job.payload={**job.payload,"evidence_snapshot":snapshot,"retrieval_warnings":retrieval_warnings}
             db.commit()
         if heartbeat and not heartbeat(): raise RuntimeError("Comparison lease was lost")
         begin_job_phase(db,job,"generating_comparison")
@@ -180,8 +184,9 @@ def process_comparison_job(job_id: str, *, heartbeat: Callable[[], bool] | None=
         if row.generation != generation:
             job.status=JobStatus.CANCELLED
         else:
-            warnings=list(output.warnings)
-            if any(p["analysis_mode"] != "ai" for p in snapshot): warnings.append("One or more source analyses have limitations.")
+            warnings=list(dict.fromkeys([*output.warnings, *job.payload.get("retrieval_warnings", [])]))
+            if any(p["analysis_mode"] != "ai" or p.get("paper_status")=="degraded" or p.get("analysis_warning") for p in snapshot):
+                warnings.append("One or more source analyses have limitations.")
             output.warnings=warnings
             if row.result_json and output.generation_mode != "ai":
                 row.error_message="Replacement generation was unavailable; previous result retained."

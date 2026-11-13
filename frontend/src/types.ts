@@ -78,6 +78,7 @@ export interface PaperSummaryResponse {
 
 export interface Job {
   id: string;
+  comparison_id?: string | null;
   paper_id?: string | null;
   project_id?: string | null;
   candidate_id?: string | null;
@@ -132,6 +133,24 @@ export interface BatchSummaryResponse {
   papers: BatchPaperSummary[];
   generation_mode: GenerationMode;
   warnings: WarningMessage[];
+}
+
+export interface SavedComparison {
+  id: string;
+  name: string;
+  goal: string;
+  status: string;
+  version: number;
+  generation: number;
+  result_generation: number;
+  result_json: BatchSummaryResponse | null;
+  outdated: boolean;
+  error_message: string | null;
+  papers: LibraryPaper[];
+  jobs: Job[];
+  blocking_items: Array<{ paper_id: string; title: string; job_id: string | null; error: string | null }>;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ChatMessage {

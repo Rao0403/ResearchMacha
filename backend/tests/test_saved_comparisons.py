@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.models.paper import Paper,PaperChunk,PaperSummary,Comparison,Job
 from app.models.states import JobStatus
 from app.services import comparisons
+from app.services.fallbacks import pop_fallback_events, record_fallback
 from app.services.jobs import claim_next_job,dispatch_job,recover_interrupted_jobs,utc_now
 
 
@@ -84,6 +85,28 @@ def test_waiting_papers_do_not_block_worker_and_readiness_queues_once(db_session
     comparisons.reconcile_comparison(db_session,row.id)
     assert db_session.get(Comparison,row.id).status=="queued"
     assert claim_next_job(lambda:Borrowed(db_session),worker_id="w",settings=Settings(_env_file=None,ai_provider="mock")) is not None
+
+
+def test_comparison_preserves_source_and_retrieval_warnings(db_session,monkeypatch):
+    papers=seed_papers(db_session)
+    setup_provider(monkeypatch)
+    papers[0].status="degraded"
+    papers[0].analysis_warning="Embedding unavailable"
+    db_session.commit()
+    original=comparisons.build_paper_contexts_by_ids
+    def retrieve(*args,**kwargs):
+        record_fallback("retrieval","lexical","Lexical retrieval used")
+        return original(*args,**kwargs)
+    monkeypatch.setattr(comparisons,"build_paper_contexts_by_ids",retrieve)
+    row=comparisons.create_comparison(db_session,name="Warnings",goal="Compare",ids=[p.id for p in papers],request_id="warnings")
+    job=db_session.query(Job).filter_by(comparison_id=row.id).one()
+    run_job(db_session,job)
+    assert row.status=="degraded" and job.status=="completed_with_warnings"
+    assert row.result_json["generation_mode"]=="ai"
+    assert "Lexical retrieval used" in row.result_json["warnings"]
+    assert "One or more source analyses have limitations." in row.result_json["warnings"]
+    assert row.evidence_json["papers"][0]["analysis_warning"]=="Embedding unavailable"
+    assert pop_fallback_events()==[]
 
 
 def test_restart_requeues_comparison_and_completed_generation_is_not_regenerated(db_session,monkeypatch):

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
@@ -96,7 +97,7 @@ def test_mysql_migration_has_reliability_constraints(mysql_factory) -> None:
 
     assert engine.dialect.name == "mysql"
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260925_0005"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == ScriptDirectory(str(API_ROOT / "alembic")).get_current_head()
     assert {"project_id", "candidate_id", "lease_expires_at", "warning_message"} <= {
         column["name"] for column in inspector.get_columns("jobs")
     }

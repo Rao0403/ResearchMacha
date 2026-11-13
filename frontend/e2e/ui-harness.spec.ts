@@ -27,6 +27,25 @@ test("renders deterministic populated paper states", async ({ page }) => {
   }
 });
 
+test("uploads a saved comparison and reopens it without another generation", async ({ page }) => {
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/api/comparisons")) mutations.push(request.url());
+  });
+  await page.goto("/comparisons");
+  await page.getByLabel("PDF collection").setInputFiles([
+    { name: "first.pdf", mimeType: "application/pdf", buffer: Buffer.from("fixture PDF") },
+    { name: "second.pdf", mimeType: "application/pdf", buffer: Buffer.from("fixture PDF") },
+  ]);
+  await page.getByRole("button", { name: "Upload and compare" }).click();
+  await expect(page).toHaveURL(/\/comparisons\/saved-comparison$/);
+  await expect(page.getByRole("table", { name: "Paper comparison matrix" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("The studies report complementary evidence.")).toBeVisible();
+  expect(mutations).toHaveLength(1);
+  expect(mutations[0]).toContain("/api/comparisons/upload");
+});
+
 test("renders a deterministic blocked workflow", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Research question").fill(blockedProjectQuestion);

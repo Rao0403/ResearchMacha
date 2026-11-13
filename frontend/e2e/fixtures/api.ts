@@ -1,6 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 
-import type { Job, LibraryPaper, ResearchProject } from "../../src/types";
+import type { Job, LibraryPaper, ResearchProject, SavedComparison } from "../../src/types";
 
 const now = "2026-10-02T10:00:00Z";
 
@@ -28,6 +28,22 @@ export const papersByState: LibraryPaper[] = [
   paper("paper-degraded", "degraded", "extractive"),
   paper("paper-failed", "failed", "unknown_legacy"),
 ];
+
+export const savedComparison: SavedComparison = {
+  id: "saved-comparison", name: "Saved evidence comparison", goal: "Compare empirical evidence",
+  status: "done", version: 0, generation: 1, result_generation: 1, outdated: false,
+  error_message: null, papers: [papersByState[0], { ...papersByState[0], id: "second-paper", title: "Second evidence study" }],
+  jobs: [], blocking_items: [], created_at: now, updated_at: now,
+  result_json: {
+    overall_takeaway: "The studies report complementary evidence.", generation_mode: "ai", warnings: [],
+    papers: ["paper-ready", "second-paper"].map((id, index) => ({
+      paper_id: id, title: index === 0 ? papersByState[0].title : "Second evidence study",
+      main_idea: "Evaluate adaptation.", problem_or_hypothesis: "Does adaptation help?",
+      experiments: "Controlled benchmark.", models_and_datasets: "A fixed evaluation set.",
+      results: "Measured improvement.", conclusions: "Evidence is limited to this benchmark.",
+    })),
+  },
+};
 
 const failedJob: Job = {
   id: "job-failed",
@@ -92,6 +108,20 @@ export async function installApiFixtures(page: Page) {
   await page.route("http://localhost:8000/api/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+
+    if (request.method() === "GET" && ["/api/comparisons", "/api/research-workflows"].includes(url.pathname)) {
+      await json(route, []);
+      return;
+    }
+    if (request.method() === "GET" && url.pathname === "/api/research-workflows/project-blocked") {
+      await json(route, blockedProject);
+      return;
+    }
+    if (request.method() === "POST" && url.pathname === "/api/comparisons/upload" ||
+        request.method() === "GET" && url.pathname === "/api/comparisons/saved-comparison") {
+      await json(route, savedComparison);
+      return;
+    }
 
     if (request.method() === "GET" && url.pathname === "/api/papers") {
       await json(route, papersByState);
