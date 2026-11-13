@@ -12,6 +12,7 @@ import type {
   ResearchProject,
   ResearchProjectStatus,
   UploadPaperResponse,
+  ReaderWorkspace,
 } from "../types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000/api";
@@ -131,13 +132,28 @@ export async function sendChatMessage(
   question: string,
   sessionId?: string,
   signal?: AbortSignal,
+  requestId?: string,
+  retry = false,
 ): Promise<ChatResponse> {
   return request<ChatResponse>(`/papers/${paperId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, session_id: sessionId ?? null }),
+    body: JSON.stringify({ question, session_id: sessionId ?? null, request_id: requestId, retry }),
     signal,
   });
+}
+
+export function getReaderWorkspace(id: string, signal?: AbortSignal, sessionId?: string) {
+  return request<ReaderWorkspace>(`/papers/${id}/workspace${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`, { signal });
+}
+export function saveReadingState(id: string, page: number, version: number, sessionId: string | undefined, signal?: AbortSignal) {
+  return request<{ page: number; version: number }>(`/papers/${id}/reading-state`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page, version, ...(sessionId ? { active_session_id: sessionId } : {}) }), signal,
+  });
+}
+export function newChatSession(id: string, signal?: AbortSignal) {
+  return request<ReaderWorkspace>(`/papers/${id}/chat-sessions`, { method: "POST", signal });
 }
 
 export function getPdfUrl(paperId: string): string {

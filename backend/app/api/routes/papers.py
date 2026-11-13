@@ -235,4 +235,4 @@ def chat_with_paper(
 ) -> ChatResponse:
     paper = get_paper_or_404(db, paper_id)
     session = create_chat_session_if_missing(db, paper.id, payload.session_id)
-    return run_chat_query(db, paper, session, payload.question)
+    return run_chat_query(db, paper, session, payload.question, request_id=payload.request_id, retry=payload.retry)

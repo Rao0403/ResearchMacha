@@ -141,7 +141,18 @@ export interface ChatMessage {
   citations: Citation[];
   generation_mode?: GenerationMode | null;
   warning?: WarningMessage | null;
+  request_id?: string | null;
+  status?: "pending" | "completed" | "failed";
+  error_message?: string | null;
   created_at: string;
+}
+
+export interface ReaderWorkspace {
+  page: number;
+  version: number;
+  active_session_id: string | null;
+  sessions: Array<{ id: string; title: string }>;
+  messages: ChatMessage[];
 }
 
 export interface ChatResponse {

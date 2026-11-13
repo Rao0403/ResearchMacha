@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -334,8 +334,53 @@ def process_analysis_job(
         db.close()
 
 
-def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: str) -> ChatResponse:
-    history = [{"role": message.role, "content": message.content} for message in session.messages]
+def cached_chat_response(session_id: str, message: ChatMessage) -> ChatResponse:
+    return ChatResponse(session_id=session_id, answer=ChatMessageRead.model_validate(message),
+        citations=message.citations, retrieved_chunk_ids=[c["chunk_id"] for c in message.citations if c.get("chunk_id")],
+        generation_mode=message.generation_mode or "unknown_legacy", warnings=[message.warning] if message.warning else [])
+
+
+def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: str, *, request_id: str | None = None, retry: bool = False) -> ChatResponse:
+    request_id = request_id or default_id()
+    db.scalar(select(ChatSession).where(ChatSession.id == session.id).with_for_update())
+    assistant_message = db.query(ChatMessage).filter_by(session_id=session.id, request_id=request_id, role="assistant").one_or_none()
+    if assistant_message is not None:
+        original = db.query(ChatMessage).filter_by(session_id=session.id, request_id=request_id, role="user").one()
+        if original.content != question:
+            raise HTTPException(409, "Request ID already belongs to another question")
+        if assistant_message.status == "completed":
+            return cached_chat_response(session.id, assistant_message)
+        if assistant_message.status == "pending" or not retry:
+            raise HTTPException(409, "Answer is still pending or requires an explicit retry")
+        assistant_message.status = "pending"
+        assistant_message.error_message = None
+    else:
+        if db.query(ChatMessage).filter_by(session_id=session.id, role="assistant", status="pending").count():
+            raise HTTPException(409, "Wait for the current answer before asking another question")
+        last = db.scalar(select(func.max(ChatMessage.position)).where(ChatMessage.session_id == session.id))
+        position = (last if last is not None else -1) + 1
+        db.add(ChatMessage(session_id=session.id, role="user", content=question, citations=[], position=position, request_id=request_id, status="completed"))
+        assistant_message = ChatMessage(session_id=session.id, role="assistant", content="", citations=[], position=position+1, request_id=request_id, status="pending")
+        db.add(assistant_message)
+    session.updated_at = now()
+    db.commit()
+    history = [{"role": m.role, "content": m.content} for m in db.query(ChatMessage).filter(
+        ChatMessage.session_id == session.id, ChatMessage.status == "completed",
+        or_(ChatMessage.request_id.is_(None), ChatMessage.request_id != request_id),
+    ).order_by(ChatMessage.position, ChatMessage.created_at, ChatMessage.id).all()]
+    try:
+        return complete_chat_query(db, paper, session, question, history, assistant_message)
+    except Exception:
+        db.rollback()
+        pending = db.query(ChatMessage).filter_by(session_id=session.id, request_id=request_id, role="assistant").one_or_none()
+        if pending is not None and pending.status == "pending":
+            pending.status = "failed"
+            pending.error_message = "Answer was interrupted. Retry this question."
+            db.commit()
+        raise
+
+
+def complete_chat_query(db: Session, paper: Paper, session: ChatSession, question: str, history: list[dict[str, str]], assistant_message: ChatMessage) -> ChatResponse:
     clear_fallback_events()
     retrieved = retrieve_paper_chunks(db, paper.id, question, limit=4)
 
@@ -376,16 +421,12 @@ def run_chat_query(db: Session, paper: Paper, session: ChatSession, question: st
     warnings.extend(event["reason"] for event in fallback_events if event["reason"] not in warnings)
     warning_message = "; ".join(warnings) or None
 
-    user_message = ChatMessage(session_id=session.id, role="user", content=question, citations=[])
-    assistant_message = ChatMessage(
-        session_id=session.id,
-        role="assistant",
-        content=answer_payload.answer,
-        citations=answer_payload.citations,
-        generation_mode=answer_payload.generation_mode,
-        warning=warning_message,
-    )
-    db.add_all([user_message, assistant_message])
+    assistant_message.content = answer_payload.answer
+    assistant_message.citations = answer_payload.citations
+    assistant_message.generation_mode = answer_payload.generation_mode
+    assistant_message.warning = warning_message
+    assistant_message.status = "completed"
+    db.add(assistant_message)
     db.commit()
     db.refresh(assistant_message)
 

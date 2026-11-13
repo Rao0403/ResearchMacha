@@ -517,7 +517,7 @@ def test_invalid_chat_citation_is_not_persisted(db_session, monkeypatch) -> None
     assert response.generation_mode == "extractive"
     assert response.warnings
     assert response.citations[0].chunk_id == chunk.id
-    messages = db_session.query(ChatMessage).filter(ChatMessage.session_id == session.id).all()
+    messages = db_session.query(ChatMessage).filter(ChatMessage.session_id == session.id).order_by(ChatMessage.position).all()
     assert len(messages) == 2
     assert messages[1].generation_mode == "extractive"
     assert messages[1].citations[0]["chunk_id"] == chunk.id

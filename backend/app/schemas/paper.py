@@ -170,6 +170,8 @@ class ArxivImportRequest(BaseModel):
 class ChatRequest(BaseModel):
     question: str = Field(min_length=3, max_length=2000)
     session_id: str | None = None
+    request_id: str | None = Field(default=None, min_length=1, max_length=64)
+    retry: bool = False
 
 
 class ChatMessageRead(BaseModel):
@@ -181,6 +183,9 @@ class ChatMessageRead(BaseModel):
     citations: list[Citation]
     generation_mode: GenerationMode | None = None
     warning: WarningRead | None = None
+    request_id: str | None = None
+    status: str = "completed"
+    error_message: str | None = None
     created_at: datetime
 
 

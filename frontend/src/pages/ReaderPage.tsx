@@ -1,11 +1,11 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { GenerationNotice } from "../components/GenerationNotice";
 import { PdfViewer } from "../components/PdfViewer";
 import { ActionButton, Alert, EmptyState, PageHeader, StatusBadge, Tabs } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
-import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper } from "../lib/api";
+import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper, getReaderWorkspace, saveReadingState, newChatSession } from "../lib/api";
 import type { ChatMessage, Highlight, PaperDetail, PaperSummary, PaperSummaryResponse } from "../types";
 
 type ReaderTab = "notes" | "highlights" | "chat";
@@ -50,6 +50,90 @@ export function ReaderPage() {
   const chatControllerRef = useRef<AbortController | null>(null);
   const mutationControllerRef = useRef<AbortController | null>(null);
   const terminalLoadKeyRef = useRef<string | null>(null);
+  const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([]);
+  const [positionRestored, setPositionRestored] = useState(false);
+  const [savingPosition, setSavingPosition] = useState(false);
+  const readingVersionRef = useRef(0);
+  const lastSavedPageRef = useRef(1);
+  const restoreTargetRef = useRef<number | null>(null);
+  const requestedPositionRef = useRef<number | null>(null);
+  const positionControllerRef = useRef<AbortController | null>(null);
+  const handlePageChange = useCallback((page: number) => {
+    if (restoreTargetRef.current !== null && restoreTargetRef.current !== page) return;
+    restoreTargetRef.current = null;
+    setCurrentPage(page);
+    setPositionRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (!paper || !positionRestored || savingPosition || currentPage === lastSavedPageRef.current) return;
+    const id = paper.id;
+    const revision = requestRevisionRef.current;
+    const timeout = window.setTimeout(() => {
+      const controller = new AbortController();
+      positionControllerRef.current = controller;
+      setSavingPosition(true);
+      saveReadingState(id, currentPage, readingVersionRef.current, sessionId, controller.signal).then((state) => {
+        if (!isCurrentPaperRequest(id, controller.signal, revision)) return;
+        readingVersionRef.current = state.version;
+        lastSavedPageRef.current = state.page;
+      }).catch(async (error: unknown) => {
+        if (!isCurrentPaperRequest(id, controller.signal, revision)) return;
+        setMessage(getErrorMessage(error));
+        // Refresh the revision after a concurrent update; leave the displayed page alone.
+        const workspace = await getReaderWorkspace(id, controller.signal).catch(() => null);
+        if (workspace && isCurrentPaperRequest(id, controller.signal, revision)) readingVersionRef.current = workspace.version;
+        lastSavedPageRef.current = currentPage; // A later deliberate page change can try again.
+      }).finally(() => {
+        if (positionControllerRef.current === controller && activePaperIdRef.current === id) setSavingPosition(false);
+      });
+    }, 400);
+    return () => window.clearTimeout(timeout);
+  }, [currentPage, paper?.id, positionRestored, savingPosition, sessionId]);
+
+  useSingleFlightPolling({
+    identity: `${paper?.id}:${sessionId}`, enabled: Boolean(paper && !sending && messages.some((m) => m.status === "pending")), intervalMs: 2000,
+    poll: async (signal) => {
+      const id = paper!.id;
+      const data = await getReaderWorkspace(id, signal, sessionId);
+      if (!signal.aborted && activePaperIdRef.current === id) setMessages(data.messages);
+    },
+  });
+
+  async function changeConversation(id?: string) {
+    if (!paper || sending || messages.some((m) => m.status === "pending")) return;
+    const paperId = paper.id;
+    const revision = requestRevisionRef.current;
+    const controller = new AbortController();
+    chatControllerRef.current?.abort();
+    chatControllerRef.current = controller;
+    try {
+      const data = id ? await getReaderWorkspace(paperId, controller.signal, id) : await newChatSession(paperId, controller.signal);
+      if (!isCurrentPaperRequest(paperId, controller.signal, revision)) return;
+      setMessages(data.messages); setSessions(data.sessions); setSessionId(data.active_session_id || undefined);
+      readingVersionRef.current = data.version;
+      if (id) {
+        const saved = await saveReadingState(paperId, currentPage, data.version, id, controller.signal);
+        if (isCurrentPaperRequest(paperId, controller.signal, revision)) readingVersionRef.current = saved.version;
+      }
+    } catch (error) { if (!controller.signal.aborted) setMessage(getErrorMessage(error)); }
+  }
+
+  async function retryTurn(answer: ChatMessage) {
+    const original = messages.find((m) => m.role === "user" && m.request_id === answer.request_id);
+    if (!paper || !original || !answer.request_id) return;
+    const id = paper.id;
+    const revision = requestRevisionRef.current;
+    const controller = new AbortController();
+    chatControllerRef.current?.abort(); chatControllerRef.current = controller;
+    setSending(true);
+    try {
+      await sendChatMessage(id, original.content, sessionId, controller.signal, answer.request_id, true);
+      const data = await getReaderWorkspace(id, controller.signal, sessionId);
+      if (isCurrentPaperRequest(id, controller.signal, revision)) setMessages(data.messages);
+    } catch (error) { if (isCurrentPaperRequest(id, controller.signal, revision)) setMessage(getErrorMessage(error)); }
+    finally { if (chatControllerRef.current === controller) setSending(false); }
+  }
 
   useEffect(() => {
     if (routePaperId) {
@@ -64,6 +148,7 @@ export function ReaderPage() {
       loadControllerRef.current?.abort();
       chatControllerRef.current?.abort();
       mutationControllerRef.current?.abort();
+      positionControllerRef.current?.abort();
     };
   }, []);
 
@@ -104,6 +189,7 @@ export function ReaderPage() {
       return;
     }
     const identityChanged = activePaperIdRef.current !== normalizedId;
+    requestedPositionRef.current = initialPage ?? null;
     requestRevisionRef.current += 1;
     const revision = requestRevisionRef.current;
     activePaperIdRef.current = normalizedId;
@@ -111,12 +197,16 @@ export function ReaderPage() {
     loadControllerRef.current?.abort();
     chatControllerRef.current?.abort();
     mutationControllerRef.current?.abort();
+    positionControllerRef.current?.abort();
     const controller = new AbortController();
     loadControllerRef.current = controller;
     if (identityChanged) {
       setPaper(null);
       setSummaryPayload(null);
       setMessages([]);
+      setSessions([]);
+      setPositionRestored(false);
+      setSavingPosition(false);
       setSessionId(undefined);
       setQuestion("");
       setCurrentPage(initialPage ?? 1);
@@ -131,11 +221,19 @@ export function ReaderPage() {
 
   async function loadPaper(paperId: string, signal: AbortSignal, revision: number) {
     try {
-      const nextPaper = await getPaper(paperId, signal);
+      const [nextPaper, workspace] = await Promise.all([getPaper(paperId, signal), getReaderWorkspace(paperId, signal)]);
       if (!isCurrentPaperRequest(paperId, signal, revision)) {
         return;
       }
       setPaper(nextPaper);
+      readingVersionRef.current = workspace.version;
+      lastSavedPageRef.current = workspace.page;
+      restoreTargetRef.current = requestedPositionRef.current ?? workspace.page;
+      setCurrentPage(restoreTargetRef.current);
+      setTargetPage(restoreTargetRef.current);
+      setMessages(workspace.messages);
+      setSessions(workspace.sessions);
+      setSessionId(workspace.active_session_id || undefined);
       if (["ready", "degraded"].includes(nextPaper.status)) {
         const terminalKey = `${nextPaper.id}:${nextPaper.analysis_generation}:${nextPaper.status}`;
         terminalLoadKeyRef.current = terminalKey;
@@ -263,15 +361,21 @@ export function ReaderPage() {
     ]);
 
     try {
-      const response = await sendChatMessage(paperId, pendingQuestion, sessionId, controller.signal);
+      const response = await sendChatMessage(paperId, pendingQuestion, sessionId, controller.signal, crypto.randomUUID());
       if (!isCurrentPaperRequest(paperId, controller.signal, revision)) {
         return;
       }
       setSessionId(response.session_id);
+      setSessions((current) => current.some((s) => s.id === response.session_id) ? current : [...current, { id: response.session_id, title: "Paper chat" }]);
       setMessages((current) => [...current, response.answer]);
     } catch (error) {
       if (!isAbortError(error) && isCurrentPaperRequest(paperId, controller.signal, revision)) {
         setMessage(getErrorMessage(error));
+        setQuestion(pendingQuestion);
+        const saved = await getReaderWorkspace(paperId, controller.signal).catch(() => null);
+        if (saved && isCurrentPaperRequest(paperId, controller.signal, revision)) {
+          setMessages(saved.messages); setSessionId(saved.active_session_id || undefined);
+        }
       }
     } finally {
       if (chatControllerRef.current === controller) {
@@ -334,15 +438,25 @@ export function ReaderPage() {
       id: "chat",
       label: "Chat",
       content: (
+        <>
+        <div className="paper-row-actions">
+          <label>Conversation<select aria-label="Conversation" value={sessionId ?? ""} disabled={sending || messages.some((m) => m.status === "pending")} onChange={(e) => void changeConversation(e.target.value)}>
+            <option value="" disabled>Select conversation</option>
+            {sessions.map((s, index) => <option key={s.id} value={s.id}>{s.title} {index + 1}</option>)}
+          </select></label>
+          <ActionButton type="button" variant="secondary" disabled={!paper || sending || messages.some((m) => m.status === "pending")} onClick={() => void changeConversation()}>New conversation</ActionButton>
+        </div>
         <ChatPanel
           disabled={!paper}
           messages={messages}
           question={question}
-          sending={sending}
+          sending={sending || messages.some((m) => m.status === "pending")}
+          onRetry={retryTurn}
           onQuestionChange={setQuestion}
           onSubmit={handleChat}
           onCitationClick={jumpToCitation}
         />
+        </>
       ),
     },
   ];
@@ -407,7 +521,7 @@ export function ReaderPage() {
       <div className="reader-grid">
         <section className="pdf-workspace" ref={pdfSectionRef}>
           {paper ? (
-            <PdfViewer title={paper.title} url={getPdfUrl(paper.id)} targetPage={targetPage} onPageChange={setCurrentPage} />
+            <PdfViewer title={paper.title} url={getPdfUrl(paper.id)} targetPage={targetPage} onPageChange={handlePageChange} />
           ) : (
             <EmptyState
               title="No paper open"
@@ -491,6 +605,7 @@ function ChatPanel({
   onQuestionChange,
   onSubmit,
   onCitationClick,
+  onRetry,
 }: {
   disabled: boolean;
   messages: ChatMessage[];
@@ -499,6 +614,7 @@ function ChatPanel({
   onQuestionChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onCitationClick: (page: number) => void;
+  onRetry: (message: ChatMessage) => void;
 }) {
   return (
     <div className="reader-chat">
@@ -508,7 +624,8 @@ function ChatPanel({
             {message.role === "assistant" ? (
               <GenerationNotice mode={message.generation_mode} warnings={message.warning} />
             ) : null}
-            <p>{message.content}</p>
+            <p>{message.status === "pending" ? "Preparing your answer..." : message.content}</p>
+            {message.status === "failed" && <div><p>{message.error_message}</p><ActionButton type="button" variant="secondary" disabled={sending} onClick={() => onRetry(message)}>Retry answer</ActionButton></div>}
             <div className="citation-row">
               {message.citations.map((citation, index) => (
                 <CitationButton citation={citation} key={`${message.id}-${index}`} onClick={onCitationClick} />

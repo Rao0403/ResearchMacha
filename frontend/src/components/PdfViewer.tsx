@@ -66,8 +66,9 @@ export function PdfViewer({ title, url, targetPage, onPageChange }: PdfViewerPro
   }, [targetPage, pageCount]);
 
   useEffect(() => {
+    if (!pageCount) return;
     onPageChange?.(pageNumber);
-  }, [onPageChange, pageNumber]);
+  }, [onPageChange, pageNumber, pageCount]);
 
   useEffect(() => {
     if (!document || !canvasRef.current) {

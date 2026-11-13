@@ -20,6 +20,13 @@ async def lifespan(application: FastAPI):
     ensure_storage_dirs()
     worker = None
     if settings.job_worker_enabled:
+        from app.core.database import SessionLocal
+        from app.models.paper import ChatMessage
+        with SessionLocal() as db:
+            db.query(ChatMessage).filter(ChatMessage.status == "pending").update({
+                "status": "failed", "error_message": "Backend restarted before this answer finished. Retry this question."
+            })
+            db.commit()
         worker = JobWorker(settings=settings)
         worker.start()
     application.state.job_worker = worker

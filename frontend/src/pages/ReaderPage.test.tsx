@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
@@ -9,9 +9,10 @@ import type { Job, PaperDetail, PaperSummaryResponse } from "../types";
 import { ReaderPage } from "./ReaderPage";
 
 vi.mock("../components/PdfViewer", () => ({
-  PdfViewer: ({ title, targetPage }: { title: string; targetPage?: number | null }) => (
-    <div>PDF: {title}{targetPage ? `, target page ${targetPage}` : ""}</div>
-  ),
+  PdfViewer: ({ title, targetPage, onPageChange }: { title: string; targetPage?: number | null; onPageChange?: (page: number) => void }) => {
+    useEffect(() => { onPageChange?.(targetPage ?? 1); }, [targetPage, onPageChange]);
+    return <div>PDF: {title}{targetPage ? `, target page ${targetPage}` : ""}<button onClick={() => onPageChange?.((targetPage ?? 1) + 1)}>Next PDF page</button></div>;
+  },
 }));
 
 vi.mock("../lib/api", () => ({
@@ -22,6 +23,7 @@ vi.mock("../lib/api", () => ({
   getPdfUrl: vi.fn((paperId: string) => `/papers/${paperId}.pdf`),
   sendChatMessage: vi.fn(),
   uploadPaper: vi.fn(),
+  getReaderWorkspace: vi.fn(), saveReadingState: vi.fn(), newChatSession: vi.fn(),
 }));
 
 function paper(id: string, title: string): PaperDetail {
@@ -61,7 +63,11 @@ function deferred<T>() {
 }
 
 describe("ReaderPage request scoping", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getReaderWorkspace).mockResolvedValue({ page: 1, version: 0, active_session_id: null, sessions: [], messages: [] });
+    vi.mocked(api.saveReadingState).mockImplementation(async (_id, page, version) => ({ page, version: version + 1 }));
+  });
   afterEach(() => vi.useRealTimers());
 
   it("clears old paper state and ignores a late summary after a route switch", async () => {
@@ -87,6 +93,25 @@ describe("ReaderPage request scoping", () => {
     expect(screen.queryByText("Stale evidence")).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "New paper" })).toBeInTheDocument();
     expect(await screen.findAllByText("New evidence")).not.toHaveLength(0);
+  });
+
+  it("restores saved chat and reading position, then persists deliberate page changes", async () => {
+    const saved = paper("saved", "Saved paper");
+    vi.mocked(api.getPaper).mockResolvedValue(saved);
+    vi.mocked(api.getPaperSummary).mockResolvedValue(summary("Notes", saved));
+    vi.mocked(api.getReaderWorkspace).mockResolvedValue({ page: 8, version: 4, active_session_id: "session", sessions: [{ id: "session", title: "Chat" }], messages: [
+      { id: "answer", role: "assistant", content: "Previously saved answer", citations: [], created_at: "2026-01-01T00:00:00Z" },
+    ] });
+    const router = createMemoryRouter([{ path: "/reader/:paperId", element: <ReaderPage /> }], { initialEntries: ["/reader/saved"] });
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByText(/target page 8/)).toBeInTheDocument();
+    expect(api.saveReadingState).not.toHaveBeenCalled();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Chat" }));
+    expect(screen.getByText("Previously saved answer")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next PDF page" }));
+    await waitFor(() => expect(api.saveReadingState).toHaveBeenCalledWith("saved", 9, 4, "session", expect.any(AbortSignal)));
+    expect(api.sendChatMessage).not.toHaveBeenCalled();
   });
 
   it("does not start duplicate summary requests during a StrictMode mount", async () => {

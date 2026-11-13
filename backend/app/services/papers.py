@@ -126,6 +126,7 @@ def create_chat_session_if_missing(db: Session, paper_id: str, session_id: str |
         session = db.get(ChatSession, session_id)
         if session and session.paper_id == paper_id:
             return session
+        raise HTTPException(status_code=404, detail="Conversation does not belong to this paper")
 
     session = (
         db.query(ChatSession)
