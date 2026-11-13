@@ -2,6 +2,8 @@ export interface Citation {
   page: number;
   excerpt: string;
   chunk_id?: string | null;
+  paper_id?: string | null;
+  title?: string | null;
 }
 
 export type GenerationMode = "ai" | "extractive" | "mock" | "unknown_legacy";
@@ -126,6 +128,9 @@ export interface BatchPaperSummary {
   models_and_datasets: string;
   results: string;
   conclusions: string;
+  limitations?: string;
+  comparability?: string;
+  citations?: Record<string, Citation[]>;
 }
 
 export interface BatchSummaryResponse {

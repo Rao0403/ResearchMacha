@@ -95,6 +95,10 @@
   overflow: hidden;
 }
 
+.pdf-workspace.pdf-workspace-with-source {
+  grid-template-rows: auto minmax(42rem, 1fr);
+}
+
 .pdf-workspace .ui-empty-state {
   min-height: 42rem;
 }

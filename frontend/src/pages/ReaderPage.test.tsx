@@ -183,12 +183,14 @@ describe("ReaderPage request scoping", () => {
     vi.mocked(api.getPaperSummary).mockResolvedValue(summary("Linked evidence", readyPaper));
     const router = createMemoryRouter(
       [{ path: "/reader/:paperId", element: <ReaderPage /> }],
-      { initialEntries: ["/reader/paper-1?page=7"] },
+      { initialEntries: [{pathname:"/reader/paper-1",search:"?page=7",state:{sourcePaperId:"paper-1",sourceExcerpt:"The original measured finding.",sourceReturnTo:"/comparisons/saved"}}] },
     );
 
     render(<RouterProvider router={router} />);
 
     expect(await screen.findByText("PDF: Linked paper, target page 7")).toBeInTheDocument();
+    expect(screen.getByText("The original measured finding.")).toBeInTheDocument();
+    expect(screen.getByRole("link",{name:"Back to evidence"})).toHaveAttribute("href","/comparisons/saved");
   });
 
   it("keeps the previous summary visible while degraded analysis is retried", async () => {

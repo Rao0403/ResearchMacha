@@ -29,6 +29,7 @@ function open(path = "/comparisons") {
   const router = createMemoryRouter([
     { path: "/comparisons", element: <BatchSummaryPage /> },
     { path: "/comparisons/:comparisonId", element: <BatchSummaryPage /> },
+    { path: "/reader/:paperId", element: <p>Reader destination</p> },
   ], { initialEntries: [path] });
   render(<RouterProvider router={router} />);
   return router;
@@ -75,6 +76,21 @@ describe("Saved comparisons", () => {
     const form=vi.mocked(api.uploadComparison).mock.calls[0][0];
     expect(form.getAll("files")).toEqual([]);
     expect(JSON.parse(form.get("library_paper_ids") as string)).toEqual(["paper-0","paper-1"]);
+  });
+
+  it("shows comparison limitations and opens the correct paper with source context", async () => {
+    const result=saved();
+    result.result_json!.papers[0].limitations="Only one dataset was evaluated.";
+    result.result_json!.papers[0].comparability="Accuracy uses a fixed test split.";
+    result.result_json!.papers[0].citations={results:[{paper_id:"paper-0", title:"Retrieval Study",page:7,excerpt:"Measured result from the experiment.",chunk_id:"source-7"}]};
+    vi.mocked(api.getComparison).mockResolvedValue(result);
+    const router=open("/comparisons/comparison");
+    expect(await screen.findByText("Only one dataset was evaluated.")).toBeInTheDocument();
+    expect(screen.getByRole("rowheader",{name:"Evaluation conditions"})).toBeInTheDocument();
+    const link=screen.getByRole("link",{name:/Open Retrieval Study, page 7:/});
+    expect(link).toHaveAttribute("href","/reader/paper-0?page=7");
+    await userEvent.setup().click(link);
+    expect(router.state.location.state).toMatchObject({sourcePaperId:"paper-0",sourceExcerpt:"Measured result from the experiment.",sourceReturnTo:"/comparisons/comparison"});
   });
 
   it("reopens saved output and saves a changed goal without automatically generating", async () => {

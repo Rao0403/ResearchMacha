@@ -1,8 +1,9 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 
 import { GenerationNotice } from "../components/GenerationNotice";
 import { PdfViewer } from "../components/PdfViewer";
+import { SourcePassage } from "../components/SourcePassage";
 import { ActionButton, Alert, EmptyState, PageHeader, StatusBadge, Tabs } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper, getReaderWorkspace, saveReadingState, newChatSession } from "../lib/api";
@@ -27,6 +28,8 @@ const summaryLabels: Array<[SummarySectionKey, string]> = [
 ];
 
 export function ReaderPage() {
+  const location = useLocation();
+  const source = location.state as { sourcePaperId?: string; sourceExcerpt?: string; sourceReturnTo?: string } | null;
   const { paperId: routePaperId } = useParams();
   const [searchParams] = useSearchParams();
   const requestedPage = parsePageNumber(searchParams.get("page"));
@@ -519,9 +522,12 @@ export function ReaderPage() {
       ) : null}
 
       <div className="reader-grid">
-        <section className="pdf-workspace" ref={pdfSectionRef}>
+        <section className={`pdf-workspace${source?.sourcePaperId === paper?.id && source?.sourceExcerpt ? " pdf-workspace-with-source" : ""}`} ref={pdfSectionRef}>
           {paper ? (
-            <PdfViewer title={paper.title} url={getPdfUrl(paper.id)} targetPage={targetPage} onPageChange={handlePageChange} />
+            <>{source?.sourcePaperId === paper.id && typeof source.sourceExcerpt === "string" && <div className="source-context">
+              <h2>Selected source passage</h2><blockquote>{source.sourceExcerpt}</blockquote>
+              {typeof source.sourceReturnTo === "string" && source.sourceReturnTo.startsWith("/") && !source.sourceReturnTo.startsWith("//") && <Link to={source.sourceReturnTo}>Back to evidence</Link>}
+            </div>}<PdfViewer title={paper.title} url={getPdfUrl(paper.id)} targetPage={targetPage} onPageChange={handlePageChange} /></>
           ) : (
             <EmptyState
               title="No paper open"
@@ -652,17 +658,7 @@ function ChatPanel({
 }
 
 function CitationButton({ citation, onClick }: { citation: { page: number; excerpt?: string }; onClick: (page: number) => void }) {
-  return (
-    <button
-      type="button"
-      className="reader-citation-chip"
-      aria-label={`Jump to page ${citation.page}`}
-      title={citation.excerpt ? `Jump to page ${citation.page}: ${citation.excerpt}` : `Jump to page ${citation.page}`}
-      onClick={() => onClick(citation.page)}
-    >
-      p.{citation.page}
-    </button>
-  );
+  return <SourcePassage citation={{ ...citation, excerpt: citation.excerpt ?? "No source excerpt recorded." }} onPageClick={onClick} />;
 }
 
 function getErrorMessage(error: unknown): string {

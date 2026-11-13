@@ -2015,3 +2015,9 @@ textarea:focus {
 .library-picker-row input { width: auto; flex: 0 0 auto; }
 .library-picker-row span { min-width: 0; overflow-wrap: anywhere; }
 .library-picker-row small { display: block; font-weight: normal; }
+.source-passage { display: grid; gap: 0.3rem; align-content: start; margin-block: 0.5rem; max-width: 100%; }
+.source-passage > a, .source-passage > button { justify-self: start; }
+.source-passage summary { cursor: pointer; color: var(--muted-strong); font-size: 0.8rem; }
+.source-passage blockquote, .source-context blockquote { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-left: 2px solid var(--accent); overflow-wrap: anywhere; white-space: pre-wrap; }
+.source-context { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+.source-context h2 { font-size: 0.95rem; }

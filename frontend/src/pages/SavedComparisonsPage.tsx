@@ -2,15 +2,17 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { GenerationNotice } from "../components/GenerationNotice";
 import { LibraryPaperPicker } from "../components/LibraryPaperPicker";
+import { SourcePassage } from "../components/SourcePassage";
 import { ActionButton, Alert, EmptyState, Field, PageHeader, StatusBadge, Surface } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { generateComparison, getComparison, getComparisonStatus, listComparisons, retryComparisonPaper, updateComparison, uploadComparison } from "../lib/api";
 import type { BatchPaperSummary, BatchSummaryResponse, SavedComparison } from "../types";
 
-const dimensions: Array<{ key: Exclude<keyof BatchPaperSummary, "paper_id" | "title">; label: string }> = [
+const dimensions: Array<{ key: Exclude<keyof BatchPaperSummary, "paper_id" | "title" | "citations">; label: string }> = [
   { key: "main_idea", label: "Main idea" }, { key: "problem_or_hypothesis", label: "Problem / hypothesis" },
   { key: "experiments", label: "Experiments" }, { key: "models_and_datasets", label: "Models / datasets" },
   { key: "results", label: "Results" }, { key: "conclusions", label: "Conclusions" },
+  { key: "limitations", label: "Limitations" }, { key: "comparability", label: "Evaluation conditions" },
 ];
 const activeStatuses = ["waiting_for_papers", "queued", "running"];
 const defaultGoal = "Compare the main ideas, methods, experiments, datasets, results, and conclusions.";
@@ -160,7 +162,8 @@ export function SavedComparisonsPage() {
 
 function ComparisonMatrix({ result }: { result: BatchSummaryResponse }) {
   function exportCsv() {
-    const rows = [["Paper", ...dimensions.map((d) => d.label)], ...result.papers.map((p) => [p.title, ...dimensions.map((d) => p[d.key])])];
+    const rows = [["Paper", ...dimensions.map((d) => d.label), "Source passages"], ...result.papers.map((p) => [p.title, ...dimensions.map((d) => p[d.key] ?? "Not recorded in saved result."),
+      dimensions.flatMap((d) => (p.citations?.[d.key] ?? []).map((c) => `${d.label}: ${c.title ?? p.title}, p.${c.page}: ${c.excerpt} [${c.chunk_id ?? ""}]`)).join("\n")])];
     const csv = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = "research-macha-comparison.csv"; link.click(); URL.revokeObjectURL(url);
@@ -169,8 +172,11 @@ function ComparisonMatrix({ result }: { result: BatchSummaryResponse }) {
     <div className="batch-section-heading"><h2>Comparison matrix</h2><ActionButton type="button" variant="secondary" onClick={exportCsv}>Export CSV</ActionButton></div>
     <GenerationNotice mode={result.generation_mode} warnings={result.warnings} />
     <section className="batch-takeaway"><h3>Overall takeaway</h3><p>{result.overall_takeaway}</p></section>
+    <p>Compare evaluation conditions alongside results. Scores from different tasks or datasets may not be directly comparable.</p>
+    {result.papers.some((p) => !p.citations || Object.keys(p.citations).length === 0) && <Alert tone="warning" title="Source links unavailable in this saved result"><p>Older or limited results may not have cell citations. Update the comparison explicitly to generate an evidence-linked result.</p></Alert>}
     <div className="batch-matrix-scroll"><table className="batch-matrix" aria-label="Paper comparison matrix"><thead><tr><th scope="col">Dimension</th>{result.papers.map((p) => <th scope="col" key={p.paper_id}><Link to={`/reader/${p.paper_id}`}>{p.title}</Link></th>)}</tr></thead>
-      <tbody>{dimensions.map((d) => <tr key={d.key}><th scope="row">{d.label}</th>{result.papers.map((p) => <td key={p.paper_id}>{p[d.key]}</td>)}</tr>)}</tbody>
+      <tbody>{dimensions.map((d) => <tr key={d.key}><th scope="row">{d.label}</th>{result.papers.map((p) => <td key={p.paper_id}><p>{p[d.key] ?? "Not recorded in saved result."}</p>
+        {(p.citations?.[d.key] ?? []).map((citation,index) => <SourcePassage key={`${citation.chunk_id}-${index}`} citation={citation} />)}</td>)}</tr>)}</tbody>
     </table></div>
   </Surface>;
 }

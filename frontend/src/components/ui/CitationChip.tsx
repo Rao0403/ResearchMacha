@@ -1,5 +1,5 @@
 import type { Citation } from "../../types";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 interface CitationChipProps {
   citation: Citation;
@@ -9,6 +9,7 @@ interface CitationChipProps {
 }
 
 export function CitationChip({ citation, paperId, paperTitle, detailed = false }: CitationChipProps) {
+  const location = useLocation();
   const label = paperTitle ? `${paperTitle}, page ${citation.page}` : `Page ${citation.page}`;
   const className = detailed ? "provenance-citation provenance-citation-link" : "ui-citation-chip";
   const content = detailed ? (
@@ -26,6 +27,7 @@ export function CitationChip({ citation, paperId, paperTitle, detailed = false }
     <Link
       className={className}
       to={`/reader/${paperId}?page=${citation.page}`}
+      state={{ sourcePaperId: paperId, sourceExcerpt: citation.excerpt, sourceReturnTo: location.pathname + location.search }}
       title={`Open ${paperTitle ?? "source paper"} on page ${citation.page}`}
       aria-label={`Open ${label}: ${citation.excerpt}`}
     >
