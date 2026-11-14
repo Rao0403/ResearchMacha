@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 import { installApiFixtures } from "./fixtures/api";
 
@@ -25,6 +26,8 @@ test("renders deterministic populated paper states", async ({ page }) => {
   for (const state of ["ready", "processing", "degraded", "failed"]) {
     await expect(page.getByText(`Fixture paper: ${state}`)).toBeVisible();
   }
+  if(process.env.CAPTURE_DOCS_SCREENSHOTS==="1" && test.info().project.name==="chromium-1440")
+    await page.screenshot({path:"../docs/assets/library.png",fullPage:true});
 });
 
 test("uploads a saved comparison and reopens it without another generation", async ({ page }) => {
@@ -54,10 +57,16 @@ test("renders a deterministic blocked workflow", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /resolve failed work before synthesis/i })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Exclude" })).toBeVisible();
+  if(process.env.CAPTURE_DOCS_SCREENSHOTS==="1" && test.info().project.name==="chromium-1440")
+    await page.screenshot({path:"../docs/assets/research.png",fullPage:true});
 });
 
 test("follows comparison evidence and saves a personal note that survives reopening", async ({ page }) => {
+  test.setTimeout(45000);
   await page.goto("/comparisons/saved-comparison");
+  await expect(page.getByRole("table",{name:"Paper comparison matrix"})).toBeVisible();
+  if(process.env.CAPTURE_DOCS_SCREENSHOTS==="1" && test.info().project.name==="chromium-1440")
+    await page.screenshot({path:"../docs/assets/comparison.png",fullPage:true});
   await page.getByRole("link",{name:"Open Fixture paper: ready, page 1: Measured improvement on the fixed benchmark."}).click();
   await expect(page).toHaveURL(/\/reader\/paper-ready\?page=1$/);
   await expect(page.getByRole("heading",{name:"Selected source passage"})).toBeVisible();
@@ -72,6 +81,18 @@ test("follows comparison evidence and saves a personal note that survives reopen
   await page.getByRole("tab",{name:"My Notes",exact:true}).click();
   await expect(page.getByText("My portfolio evidence note",{exact:true})).toBeVisible();
   await expect(page.getByRole("link",{name:"Back to evidence"})).toHaveAttribute("href","/comparisons/saved-comparison");
+  await page.getByRole("button",{name:"Export",exact:true}).click();
+  await page.getByRole("checkbox",{name:/My portfolio evidence note/}).check();
+  const [download]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"Download Markdown"}).click()]);
+  expect(download.suggestedFilename()).toBe("research-macha-paper-fixture.md");
+  expect(await readFile((await download.path())!,"utf8")).toContain("My portfolio evidence note");
+  await expect(page.locator(".pdf-canvas-shell canvas")).toBeVisible({timeout:15000});
+  await expect(page.locator(".pdf-rendering-pill")).toBeHidden({timeout:10000});
+  if(process.env.CAPTURE_DOCS_SCREENSHOTS==="1" && test.info().project.name==="chromium-1440"){
+    await page.getByRole("button",{name:"Export",exact:true}).click();
+    await page.locator(".personal-notes").evaluate((element)=>{element.scrollTop=element.scrollHeight;});
+    await page.screenshot({path:"../docs/assets/reader.png",fullPage:true});
+  }
   const results=await new AxeBuilder({page}).analyze();
   expect(results.violations.filter((v) => ["serious","critical"].includes(v.impact ?? ""))).toEqual([]);
 });

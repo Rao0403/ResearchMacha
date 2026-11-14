@@ -192,7 +192,7 @@ export function PdfViewer({ title, url, targetPage, onPageChange }: PdfViewerPro
           </button>
         </div>
       </div>
-      <div className="pdf-canvas-shell">
+      <div className="pdf-canvas-shell" tabIndex={0} role="region" aria-label="PDF page viewport">
         {rendering ? <span className="pdf-rendering-pill">Rendering page...</span> : null}
         <canvas ref={canvasRef} />
       </div>

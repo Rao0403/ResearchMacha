@@ -109,10 +109,25 @@ export const blockedProject: ResearchProject = {
 export async function installApiFixtures(page: Page) {
   const notes: PersonalNote[] = [];
   const readerPaper = { ...papersByState[0], chunks: [], highlights: [] };
-  const blankPdf = "JVBERi0xLjMKJeLjz9MKMSAwIG9iago8PAovUHJvZHVjZXIgKHB5cGRmKQo+PgplbmRvYmoKMiAwIG9iago8PAovVHlwZSAvUGFnZXMKL0NvdW50IDEKL0tpZHMgWyA0IDAgUiBdCj4+CmVuZG9iagozIDAgb2JqCjw8Ci9UeXBlIC9DYXRhbG9nCi9QYWdlcyAyIDAgUgo+PgplbmRvYmoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUmVzb3VyY2VzIDw8Cj4+Ci9NZWRpYUJveCBbIDAuMCAwLjAgMzAwIDQwMCBdCi9QYXJlbnQgMiAwIFIKPj4KZW5kb2JqCnhyZWYKMCA1CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMDU0IDAwMDAwIG4gCjAwMDAwMDAxMTMgMDAwMDAgbiAKMDAwMDAwMDE2MiAwMDAwMCBuIAp0cmFpbGVyCjw8Ci9TaXplIDUKL1Jvb3QgMyAwIFIKL0luZm8gMSAwIFIKPj4Kc3RhcnR4cmVmCjI1NgolJUVPRgo=";
+  // A generated, text-based offline demonstration PDF; no real paper or model output.
+  const blankPdf = "JVBERi0xLjMKJeLjz9MKMSAwIG9iago8PAovUHJvZHVjZXIgKHB5cGRmKQo+PgplbmRvYmoKMiAwIG9iago8PAovVHlwZSAvUGFnZXMKL0NvdW50IDEKL0tpZHMgWyA0IDAgUiBdCj4+CmVuZG9iagozIDAgb2JqCjw8Ci9UeXBlIC9DYXRhbG9nCi9QYWdlcyAyIDAgUgo+PgplbmRvYmoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUmVzb3VyY2VzIDw8Ci9Gb250IDw8Ci9GMSA1IDAgUgo+Pgo+PgovTWVkaWFCb3ggWyAwLjAgMC4wIDUwMCA2NTAgXQovUGFyZW50IDIgMCBSCi9Db250ZW50cyA2IDAgUgo+PgplbmRvYmoKNSAwIG9iago8PAovVHlwZSAvRm9udAovU3VidHlwZSAvVHlwZTEKL0Jhc2VGb250IC9IZWx2ZXRpY2EKPj4KZW5kb2JqCjYgMCBvYmoKPDwKL0xlbmd0aCAzMjYKPj4Kc3RyZWFtCkJUIC9GMSAyMCBUZiAzNSA1OTAgVGQgKFJlc2VhcmNoTWFjaGEgc2FtcGxlIHBhcGVyKSBUaiAvRjEgMTIgVGYgMCAtNDAgVGQgKE9mZmxpbmUgVUkgZml4dHVyZSAtIG5vdCBhIHJlc2VhcmNoIHB1YmxpY2F0aW9uLikgVGogMCAtMzUgVGQgKE1ldGhvZDogY29tcGFyZSBldmlkZW5jZSBhbmQgaW5zcGVjdCBzb3VyY2UgcGFzc2FnZXMuKSBUaiAwIC0yNSBUZCAoTWVhc3VyZWQgaW1wcm92ZW1lbnQgb24gdGhlIGZpeGVkIGJlbmNobWFyay4pIFRqIDAgLTQ1IFRkIChQZXJzb25hbCBub3RlcyByZW1haW4gc2VwYXJhdGUgZnJvbSBnZW5lcmF0ZWQgY29udGVudC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDcKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDE1IDAwMDAwIG4gCjAwMDAwMDAwNTQgMDAwMDAgbiAKMDAwMDAwMDExMyAwMDAwMCBuIAowMDAwMDAwMTYyIDAwMDAwIG4gCjAwMDAwMDAyOTQgMDAwMDAgbiAKMDAwMDAwMDM2NCAwMDAwMCBuIAp0cmFpbGVyCjw8Ci9TaXplIDcKL1Jvb3QgMyAwIFIKL0luZm8gMSAwIFIKPj4Kc3RhcnR4cmVmCjc0MQolJUVPRgo=";
   await page.route("http://localhost:8000/api/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    const exportMatch=url.pathname.match(/^\/api\/exports\/(paper|research|comparison)\/([^/]+)(\/options)?$/);
+    if(request.method()==="GET" && exportMatch){
+      const kind=exportMatch[1];
+      if(exportMatch[3]){
+        await json(route,{has_result:kind!=="research",paper_count:kind==="paper"?1:2,warnings:[],notes:notes.map((note)=>({
+          id:note.id,paper_id:note.paper_id,paper_title:readerPaper.title,page:note.page,preview:note.body,
+        }))});return;
+      }
+      const format=url.searchParams.get("format") ?? "markdown";
+      const selected=notes.filter((note)=>url.searchParams.getAll("note_ids").includes(note.id));
+      const body=format==="bibtex" ? "@misc{fixture, title={Offline fixture}}\n" : format==="csv" ? "Paper,Results\nFixture,Measured\n" : "# Offline export fixture\n\n"+selected.map((n)=>n.body).join("\n");
+      await route.fulfill({contentType:{markdown:"text/markdown",bibtex:"application/x-bibtex",csv:"text/csv"}[format] ?? "text/plain",body,
+        headers:{"Access-Control-Expose-Headers":"Content-Disposition","Content-Disposition":`attachment; filename="research-macha-${kind}-fixture.${{markdown:"md",bibtex:"bib",csv:"csv"}[format]}"`}});return;
+    }
     const readerBase = "/api/papers/paper-ready";
     if (request.method() === "GET" && url.pathname === readerBase) {
       await json(route, readerPaper); return;

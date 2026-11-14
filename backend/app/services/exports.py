@@ -156,7 +156,8 @@ def public_url(paper: dict) -> str | None:
 
 def local_url(ident: str, page: int | None = None) -> str:
     from urllib.parse import quote, urlencode
-    return "/reader/"+quote(ident,safe="")+("?"+urlencode({"page":page}) if page else "")
+    from app.core.config import get_settings
+    return get_settings().app_origin.rstrip("/")+"/reader/"+quote(ident,safe="")+("?"+urlencode({"page":page}) if page else "")
 
 
 def citation_lines(citations: list[dict], fallback_id: str | None = None) -> list[str]:

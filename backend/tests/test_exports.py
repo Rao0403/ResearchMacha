@@ -38,11 +38,16 @@ def test_markdown_exports_citations_and_only_selected_personal_notes(api_client,
     response=api_client.get(url,params={"note_ids":note.id})
     assert "82% accuracy" in response.text and "A measured 82% result." in response.text
     assert f"/reader/{paper.id}?page=2" in response.text and "old-source" in response.text
+    from app.core.config import get_settings
+    assert f"{get_settings().app_origin.rstrip('/')}/reader/{paper.id}?page=2" in response.text
     assert "My Notes — personal commentary" in response.text and "My independent critique" in response.text
     assert "https://arxiv.org/abs/2401.00001" in response.text
     assert "private-path.pdf" not in response.text
     assert response.headers["content-disposition"].endswith('.md"')
     assert response.headers["cache-control"]=="no-store"
+    from app.main import settings
+    cross_origin=api_client.get(url,headers={"Origin":settings.app_origin})
+    assert "Content-Disposition" in cross_origin.headers["access-control-expose-headers"]
     assert api_client.get(url,params={"note_ids":foreign.id}).status_code==404
 
 
