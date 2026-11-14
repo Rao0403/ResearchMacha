@@ -160,6 +160,8 @@ export interface SavedComparison {
   generation: number;
   result_generation: number;
   result_json: BatchSummaryResponse | null;
+  result_goal?: string | null;
+  result_created_at?: string | null;
   outdated: boolean;
   error_message: string | null;
   papers: LibraryPaper[];
@@ -286,6 +288,7 @@ export interface ResearchProject {
   inclusion_criteria: string[];
   synthesis_json?: ResearchBrief | null;
   synthesis_generation: number;
+  brief_outdated?: boolean | null;
   created_at: string;
   updated_at: string;
   candidates: ResearchCandidate[];

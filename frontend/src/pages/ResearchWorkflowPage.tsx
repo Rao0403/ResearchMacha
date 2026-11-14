@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { GenerationNotice } from "../components/GenerationNotice";
 import { ResearchCitationLink } from "../components/ResearchCitationLink";
 import { LibraryPaperPicker } from "../components/LibraryPaperPicker";
+import { ExportPanel } from "../components/ExportPanel";
 import { ActionButton, Alert, Field, PageHeader, StatusBadge, Surface } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import {
@@ -362,6 +363,7 @@ export function ResearchWorkflowPage() {
       {message ? <Alert tone="danger" title="The workflow could not continue" role="alert"><p>{message}</p></Alert> : null}
       {submitting ? <AgentLoadingState /> : null}
       {project ? <WorkflowStats project={project} selectedCount={selected.size} /> : null}
+      {project && <ExportPanel key={project.id} kind="research" id={project.id} revision={`${project.synthesis_generation}:${project.updated_at}`} />}
 
       {project && (project.agent_run || project.memory_signals?.length) ? (
         <details className="research-technical-details">
@@ -447,6 +449,7 @@ export function ResearchWorkflowPage() {
 
       {project?.synthesis_json ? (
         <Surface className="brief-panel">
+          {project.brief_outdated && <Alert tone="warning" title="Previous saved brief"><p>The evidence set or analysis has changed. This brief and its exports retain the recorded sources until a replacement succeeds.</p></Alert>}
           <div className="research-section-heading">
             <div>
               <p className="research-section-kicker">Final brief</p>

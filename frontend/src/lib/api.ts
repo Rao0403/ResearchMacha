@@ -19,6 +19,28 @@ import type {
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000/api";
 
+export type ExportKind = "paper" | "research" | "comparison";
+export type ExportFormat = "markdown" | "bibtex" | "csv";
+export interface ExportOptions {
+  has_result: boolean;
+  paper_count: number;
+  warnings: string[];
+  notes: Array<{ id: string; paper_id: string; paper_title: string; page: number | null; preview: string }>;
+}
+export function getExportOptions(kind: ExportKind, id: string, signal?: AbortSignal) {
+  return request<ExportOptions>(`/exports/${kind}/${id}/options`, { signal });
+}
+export async function downloadSavedWork(kind: ExportKind, id: string, format: ExportFormat, noteIds: string[], signal?: AbortSignal) {
+  const query = new URLSearchParams({ format });
+  if (format === "markdown") noteIds.forEach((note) => query.append("note_ids", note));
+  const response = await fetch(`${apiBaseUrl}/exports/${kind}/${id}?${query}`, { signal });
+  if (!response.ok) throw await responseError(response);
+  const extension = { markdown: "md", bibtex: "bib", csv: "csv" }[format];
+  const filename = response.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1]
+    ?? `research-macha-${kind}-${id}.${extension}`;
+  return { blob: await response.blob(), filename: filename.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-") };
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,

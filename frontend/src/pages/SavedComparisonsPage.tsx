@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { GenerationNotice } from "../components/GenerationNotice";
 import { LibraryPaperPicker } from "../components/LibraryPaperPicker";
 import { SourcePassage } from "../components/SourcePassage";
+import { ExportPanel } from "../components/ExportPanel";
 import { ActionButton, Alert, EmptyState, Field, PageHeader, StatusBadge, Surface } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { generateComparison, getComparison, getComparisonStatus, listComparisons, retryComparisonPaper, updateComparison, uploadComparison } from "../lib/api";
@@ -144,7 +145,7 @@ export function SavedComparisonsPage() {
           <ActionButton type="button" disabled={dirty || activeStatuses.includes(comparison.status) || comparison.blocking_items.length > 0} busy={busy} onClick={() => void action("generate")}>Update comparison</ActionButton>
         </div>
         {dirty && <p role="status">Unsaved changes. Save details before generating a replacement.</p>}
-        {comparison.outdated && <Alert tone="warning" title="Previous result"><p>This result uses an earlier goal or evidence generation. It remains available until you update the comparison.</p></Alert>}
+        {comparison.outdated && <Alert tone="warning" title="Previous result"><p>This result uses an earlier goal or evidence generation. It remains available until you update the comparison.</p><p>Goal used: {comparison.result_goal ?? "Not recorded for this legacy result."}</p></Alert>}
         {comparison.error_message && <Alert tone="danger" title="Generation did not finish"><p>{comparison.error_message}</p></Alert>}
       </Surface>
       <Surface><h2>Comparison papers</h2>{comparison.papers.map((p) => <div className="paper-status-row" key={p.id}>
@@ -155,21 +156,15 @@ export function SavedComparisonsPage() {
       {comparison.blocking_items.map((blocker) => <Alert key={blocker.paper_id} tone="danger" title={blocker.title}><p>{blocker.error || "Paper analysis failed."}</p>
         {blocker.job_id && <ActionButton type="button" variant="secondary" busy={busy} onClick={() => void action("retry", blocker.paper_id)}>Retry paper analysis</ActionButton>}
       </Alert>)}
+      <ExportPanel key={comparison.id} kind="comparison" id={comparison.id} revision={`${comparison.generation}:${comparison.updated_at}`} />
       {comparison.result_json && <ComparisonMatrix result={comparison.result_json} />}
     </>}
   </div>;
 }
 
 function ComparisonMatrix({ result }: { result: BatchSummaryResponse }) {
-  function exportCsv() {
-    const rows = [["Paper", ...dimensions.map((d) => d.label), "Source passages"], ...result.papers.map((p) => [p.title, ...dimensions.map((d) => p[d.key] ?? "Not recorded in saved result."),
-      dimensions.flatMap((d) => (p.citations?.[d.key] ?? []).map((c) => `${d.label}: ${c.title ?? p.title}, p.${c.page}: ${c.excerpt} [${c.chunk_id ?? ""}]`)).join("\n")])];
-    const csv = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a"); link.href = url; link.download = "research-macha-comparison.csv"; link.click(); URL.revokeObjectURL(url);
-  }
   return <Surface className="batch-comparison-panel">
-    <div className="batch-section-heading"><h2>Comparison matrix</h2><ActionButton type="button" variant="secondary" onClick={exportCsv}>Export CSV</ActionButton></div>
+    <div className="batch-section-heading"><h2>Comparison matrix</h2></div>
     <GenerationNotice mode={result.generation_mode} warnings={result.warnings} />
     <section className="batch-takeaway"><h3>Overall takeaway</h3><p>{result.overall_takeaway}</p></section>
     <p>Compare evaluation conditions alongside results. Scores from different tasks or datasets may not be directly comparable.</p>

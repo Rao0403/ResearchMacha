@@ -15,7 +15,7 @@ ExportKind=Literal["paper","research","comparison"]
 def export_options(kind: ExportKind, ident: str, db: Session=Depends(get_db)):
     artifact=load_artifact(db,kind,ident)
     titles={p["paper_id"]:p["title"] for p in artifact.papers}
-    return {"has_result":artifact.result is not None,"warnings":warnings_for(artifact),
+    return {"has_result":artifact.result is not None,"paper_count":len(artifact.papers),"warnings":warnings_for(artifact),
             "notes":[{"id":n.id,"paper_id":n.paper_id,"paper_title":titles[n.paper_id],"page":n.page,"preview":n.body[:240]} for n in notes_for_artifact(db,artifact)]}
 
 

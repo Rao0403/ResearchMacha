@@ -155,8 +155,8 @@ def public_url(paper: dict) -> str | None:
 
 
 def local_url(ident: str, page: int | None = None) -> str:
-    from urllib.parse import quote
-    return "/reader/"+quote(ident,safe="")+(f"?page={page}" if page else "")
+    from urllib.parse import quote, urlencode
+    return "/reader/"+quote(ident,safe="")+("?"+urlencode({"page":page}) if page else "")
 
 
 def citation_lines(citations: list[dict], fallback_id: str | None = None) -> list[str]:
@@ -259,10 +259,12 @@ def spreadsheet_cell(value) -> str:
 def comparison_csv(artifact: Artifact) -> str:
     output=io.StringIO(newline="")
     writer=csv.writer(output)
-    writer.writerow(["Paper ID","Paper",*[label for _,label in COMPARISON_FIELDS],"Sources","Goal used","Generation mode","Saved result date","Warnings"])
+    writer.writerow(["Paper ID","Paper",*[label for _,label in COMPARISON_FIELDS],"Sources","Public source","Overall takeaway","Goal used","Generation mode","Saved result date","Warnings"])
+    source_metadata={p["paper_id"]:p for p in artifact.papers}
     for paper in (artifact.result or {}).get("papers",[]):
         sources="\n".join(f"{field}: {c.get('title') or paper['title']}, p.{c.get('page')}, chunk {c.get('chunk_id')}: {c.get('excerpt')} [local {local_url(c.get('paper_id') or paper['paper_id'],c.get('page'))}]"
                           for field,values in paper.get("citations",{}).items() for c in values)
         writer.writerow([spreadsheet_cell(value) for value in [paper["paper_id"],paper["title"],*[paper.get(key,"Not recorded in saved result.") for key,_ in COMPARISON_FIELDS],
-                         sources,artifact.question or "Not recorded",artifact.mode,artifact.generated_at or "Not recorded","; ".join(warnings_for(artifact))]])
+                         sources,public_url(source_metadata.get(paper["paper_id"],{})) or "Not recorded",(artifact.result or {}).get("overall_takeaway","Not recorded"),
+                         artifact.question or "Not recorded",artifact.mode,artifact.generated_at or "Not recorded","; ".join(warnings_for(artifact))]])
     return "\ufeff"+output.getvalue()

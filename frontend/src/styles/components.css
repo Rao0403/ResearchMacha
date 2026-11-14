@@ -366,3 +366,9 @@
     width: 100%;
   }
 }
+.workspace-export { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); }
+.workspace-export-content { display: grid; gap: var(--space-3); margin-top: var(--space-3); overflow-wrap: anywhere; }
+.export-note-selection { margin: 0; padding: var(--space-3); border: 1px solid var(--color-border); max-height: 20rem; overflow-y: auto; }
+.export-note-selection label { display: flex; gap: var(--space-2); align-items: start; padding-block: var(--space-2); }
+.export-note-selection input { width: auto; min-height: auto; flex: 0 0 auto; }
+.export-note-selection small { display: block; font-weight: normal; }

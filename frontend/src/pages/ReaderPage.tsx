@@ -5,6 +5,7 @@ import { GenerationNotice } from "../components/GenerationNotice";
 import { PdfViewer } from "../components/PdfViewer";
 import { SourcePassage } from "../components/SourcePassage";
 import { PersonalNotes } from "../components/PersonalNotes";
+import { ExportPanel } from "../components/ExportPanel";
 import { ActionButton, Alert, EmptyState, PageHeader, StatusBadge, Tabs } from "../components/ui";
 import { useSingleFlightPolling } from "../hooks/useSingleFlightPolling";
 import { analyzePaper, getPaper, getPaperStatus, getPaperSummary, getPdfUrl, sendChatMessage, uploadPaper, getReaderWorkspace, saveReadingState, newChatSession } from "../lib/api";
@@ -518,6 +519,7 @@ export function ReaderPage() {
           </form>
         </div>
       </details>
+      {paper && <ExportPanel key={paper.id} kind="paper" id={paper.id} revision={`${paper.analysis_generation}:${paper.status}`} />}
 
       {message ? <Alert tone={paper && !["ready", "degraded", "failed"].includes(paper.status) ? "info" : "warning"} title="Reader status"><p>{message}</p></Alert> : null}
 
