@@ -51,7 +51,7 @@ If an existing virtual environment was moved with the renamed folder, refresh it
 
 ### Optional development reset
 
-Old results do not have to be preserved during this development switch. The reset is opt-in and has not been run as part of implementation. It clears ResearchMacha rows, including jobs, projects, notes, chat, and memories, plus the configured legacy/fingerprinted Qdrant collections. It retains the database schema, Alembic revision, unrelated tables/collections, configuration, and PDF files in `backend/uploads`. Reupload PDFs to create fresh library records; retained files are not automatically reindexed or analyzed.
+This is destructive cleanup for disposable development data, not an upgrade or recovery procedure. Back up valuable work and use additive migrations instead. The reset clears ResearchMacha rows, including saved results, personal notes, jobs, projects, chat and memories, plus the configured legacy/fingerprinted Qdrant collections. It retains schema/Alembic revision, unrelated tables/collections, configuration and PDF files in `backend/uploads`. Retained files alone cannot restore the deleted notes or results.
 
 Stop the backend first. With MySQL and Qdrant running, execute from `backend`:
 
@@ -65,7 +65,7 @@ Stop the backend first. With MySQL and Qdrant running, execute from `backend`:
 
 The command requires `APP_ENV=development`, local services, and a database named `research_macha` or `research_macha_*`. `--confirm` must match the actual configured database name. It does not call an AI provider. Qdrant and SQL cannot share a transaction: vectors are cleared first, SQL deletes are transactional, and an interrupted reset can be rerun. Fix service connectivity or run migrations if the preview fails; do not bypass the guards.
 
-The worker refuses startup when queued/running jobs were created by the previous provider or lack provider metadata. This prevents an old run from unexpectedly spending credits on restart. Complete this reset, or use a separate fresh development database and collection names. Existing completed results alone do not trigger paid regeneration.
+The worker refuses startup when queued/running jobs were created by the previous provider or lack provider metadata. This prevents an old run from unexpectedly spending credits on restart. Preserve the original database and files; use a separate development database/collection names when changing providers. Worker-disabled startup can serve saved data without replaying jobs. Reset only when you explicitly intend to discard that database's development work. Existing completed results alone do not trigger regeneration.
 
 ## Start the app
 
@@ -90,12 +90,12 @@ Open `http://localhost:5173`. Future starts can skip `npm ci` unless dependencie
 
 ## Credit controls and evaluation
 
-- No live API evaluation, real model test, or automatic reanalysis is part of this migration.
+- Automated checks and export completion use no live API evaluation or automatic reanalysis.
 - SDK retries are disabled. Each structured operation makes at most two generation requests: one initial request and, only for output validation or rate limiting, one repair/retry. Authentication, quota, configuration, timeout, refusal, incomplete-output, and service failures do not trigger that retry.
 - A workflow includes multiple operations and can include multiple papers. The two-attempt limit is not a workflow-wide request limit. Worker recovery and manually pressing Retry/Reanalyze can initiate new operations.
 - Generation requests use `store=false`. No OpenAI search tools, hosted file uploads, or background Responses jobs are used. Document text still leaves the machine for generation and embeddings; `store=false` is not a claim of zero data retention.
 - Terminal entries beginning `AI usage:` report operation, model, attempt, elapsed time, request ID when supplied, token totals, cached tokens, and reasoning tokens when supplied. Embedding logs include batch size and actual input tokens. Prompts, PDF text, API keys, and estimated dollar charges are not logged.
-- Start manual testing with one short PDF and one chat question. Check notes and citations against the PDF and inspect actual usage before trying multi-paper synthesis. Select fewer research candidates for the first run. We will evaluate quality and spending together before changing models.
+- Start manual testing with one short PDF and one chat question. Check notes and citations against the PDF and inspect actual usage before trying multi-paper synthesis. Reuse processed library papers. Review quality and usage before changing models or budgets.
 - Output-token limits may produce an explicitly degraded result if too low; they never cause an automatic upgrade to a more expensive model. Increase a budget or change the model only after reviewing an actual failure.
 
 ## Offline checks
@@ -110,7 +110,7 @@ cmd /c npm test -- --run
 cmd /c npm run build
 ```
 
-MySQL-specific tests require a separate disposable test database; see [testing checklist](testing-checklist.md). Real model quality and latency remain untested until manual user testing.
+MySQL-specific tests create disposable databases; see [testing checklist](testing-checklist.md). Offline checks do not establish real model quality or latency. See [workflows and exports](demo.md) and [data preservation/recovery](data-and-recovery.md).
 
 ## Troubleshooting
 
@@ -119,4 +119,4 @@ MySQL-specific tests require a separate disposable test database; see [testing c
 - Invalid model/schema: the app displays a configuration warning. Preserve the error and operation name for diagnosis rather than repeatedly rerunning the workflow.
 - Degraded notes/chat: the app may show literal source excerpts when generation fails. They are usable evidence, not a successful AI summary. Existing successful analysis is retained on a failed reanalysis.
 - Missing embeddings/Qdrant outage: retrieval uses compatible SQL embeddings or lexical/initial-chunk fallback with a warning. OpenAI and old provider vectors are not compared together.
-- Old queued jobs: stop the backend and use the optional reset above. No automatic conversion or regeneration occurs.
+- Old-provider queued jobs: stop the backend, preserve the original data and read the recovery guidance. Do not reset valuable work merely to pass the startup guard. No automatic provider conversion or regeneration occurs.

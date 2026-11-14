@@ -1,69 +1,48 @@
-# Demo Walkthrough
+# Portfolio walkthrough and screenshots
 
-Use this walkthrough for a portfolio recording or live demo.
+These screenshots are reproducible offline UI fixtures, not real research findings or evidence of model quality. The sample PDF says it is a demonstration fixture. Real-paper testing should be recorded separately.
 
-## Visual Assets
+## Screens
 
-Architecture:
+### Saved paper library
 
-![ResearchMacha architecture](assets/architecture.svg)
+![Library with paper analysis states](assets/library.png)
 
-Workflow storyboard:
+### Research blockers and recovery
 
-![ResearchMacha demo walkthrough](assets/demo-walkthrough.svg)
+![Research workflow with a failed import](assets/research.png)
 
-These SVGs are intentionally checked into the repo so the README and docs render well on GitHub without external tooling. After full manual testing, add real screenshots or a GIF under `docs/assets/` and link them from the README.
+### Saved evidence comparison
 
-Recommended filenames for captured media:
+![Comparison matrix and source passages](assets/comparison.png)
 
-- `docs/assets/research-workflow.gif`
-- `docs/assets/reader-citation-jump.png`
-- `docs/assets/batch-summary-export.png`
+### Reader, personal notes and export
 
-## Seed Demo Project
+![Reader with a saved personal note and export controls](assets/reader.png)
 
-The backend includes a small seed script for creating a demo research project with known arXiv candidates.
+## Capture the same UI examples
 
-Run from the backend directory:
+From the frontend directory, with installed Chromium:
 
-```powershell
-cd backend
-.\.venv\Scripts\python.exe scripts\seed_demo.py
-```
+~~~powershell
+$env:CAPTURE_DOCS_SCREENSHOTS='1'
+cmd /c npm run test:e2e -- --project=chromium-1440
+$env:CAPTURE_DOCS_SCREENSHOTS=$null
+~~~
 
-This script creates the demo project used by the debug project routes. It does not import and analyze every paper automatically; the main showcase path should still be the visible `Research` workflow.
+The test server intercepts API requests with fixtures. It does not start a paid backend or use developer uploads. Images are written under docs/assets/. Browser downloads use temporary test storage.
 
-## Recording Script
+## A real demonstration
 
-1. Start MySQL, Qdrant, backend, and frontend.
-2. Open `Research`.
-3. Ask:
+1. Use one already-processed paper from Library to minimize fresh API use.
+2. Show its PDF, one checked source passage and a grounded chat follow-up.
+3. Save a personal critique and reopen the paper to recover it and its reading position.
+4. Reuse two papers in a comparison with a concrete evaluation goal.
+5. Show limitations/evaluation conditions before discussing numerical results.
+6. Reopen a saved research project through Projects and inspect its cited brief.
+7. Export Markdown with one selected personal note, BibTeX references and comparison CSV.
+8. Demonstrate Retry/Exclude using controlled offline fixtures rather than intentionally failing paid model calls.
 
-   ```text
-   What are effective methods for reducing hallucinations in retrieval augmented generation systems?
-   ```
+Describe model-generated interpretation, quoted evidence and personal thinking separately. Do not present proposed experiments as studies that the cited paper already performed.
 
-4. Show the status track and agent trace.
-5. Approve the selected papers.
-6. Show imported paper statuses, memory signals, and the final cited brief.
-7. Open one imported paper in `Reader`.
-8. Show PDF.js page navigation and zoom.
-9. Click a note/highlight citation and show the PDF jumping to that page.
-10. Ask a grounded chat question:
-
-    ```text
-    What should I pay attention to in the experiments?
-    ```
-
-11. Open `Batch Summary`.
-12. Upload two or three PDFs.
-13. Show the comparison table and export CSV.
-
-## What To Emphasize
-
-- The user only supplies a research question and approves papers.
-- Agent tools are persisted and visible.
-- RAG answers and synthesis are citation-grounded.
-- Qdrant is the default vector store, but MySQL fallback keeps the app resilient.
-- Memory is simple, inspectable, and improves future selection/synthesis after repeated use.
-- The PDF reader supports practical reading behavior: page navigation, zoom, and citation jumps.
+See [architecture](architecture.md), [engineering decisions](engineering-notes.md) and [workflow instructions](demo.md).
