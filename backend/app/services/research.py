@@ -47,6 +47,7 @@ from app.services.memory import create_memory, latest_memories, memory_payload, 
 from app.services.papers import create_or_update_paper_from_arxiv, reusable_papers
 from app.services.vector_store import get_vector_store
 from app.services.retrieval import retrieve_paper_chunks
+from app.services.provenance import capture_evidence, brief_is_outdated
 
 DEMO_QUESTION = "How can retrieval augmented generation improve factuality in domain-specific question answering?"
 DEMO_ARXIV_IDS = ["2005.11401", "2310.11511", "2403.10131"]
@@ -151,6 +152,7 @@ def serialize_project(project: ResearchProject) -> ResearchProjectRead:
         inclusion_criteria=project.inclusion_criteria or [],
         synthesis_json=project.synthesis_json,
         synthesis_generation=project.synthesis_generation,
+        brief_outdated=brief_is_outdated(project),
         created_at=project.created_at,
         updated_at=project.updated_at,
         candidates=[ResearchCandidateRead.model_validate(candidate) for candidate in sorted(project.candidates, key=lambda item: item.score, reverse=True)],
@@ -980,6 +982,11 @@ def synthesize_project(
     contexts = build_paper_contexts(project)
     if not contexts:
         raise HTTPException(status_code=400, detail="No analyzed paper evidence is available for synthesis")
+    artifact = {"question": project.question, "generation": project.synthesis_generation,
+                "papers": capture_evidence(db, contexts)}
+    previous_brief = project.synthesis_json
+    # Release the read snapshot before the model call; the generation is rechecked under a lock.
+    db.commit()
 
     if on_phase:
         on_phase("retrieving_memories")
@@ -1015,13 +1022,20 @@ def synthesize_project(
     if on_phase:
         on_phase("persisting_brief")
     project = db.execute(
-        select(ResearchProject).where(ResearchProject.id == project_id).with_for_update()
+        select(ResearchProject).where(ResearchProject.id == project_id).with_for_update().execution_options(populate_existing=True)
     ).scalar_one()
     if expected_generation is not None and project.synthesis_generation != expected_generation:
         raise StaleSynthesisJob(
             f"Synthesis generation {expected_generation} was superseded by {project.synthesis_generation}."
         )
-    project.synthesis_json = brief.model_dump()
+    if previous_brief and previous_brief.get("generation_mode") == "ai" and brief.generation_mode == "extractive":
+        project.synthesis_json = {**previous_brief, "warnings": list(dict.fromkeys([
+            *(previous_brief.get("warnings") or []),
+            "Replacement synthesis was unavailable; the previous successful brief and its sources were retained.",
+            *brief.warnings,
+        ]))}
+    else:
+        project.synthesis_json = {**brief.model_dump(), "artifact": {**artifact, "generated_at": now().isoformat()+"Z"}}
     project.status = (
         "degraded"
         if brief.generation_mode != "ai"

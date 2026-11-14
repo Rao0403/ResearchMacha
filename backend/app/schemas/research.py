@@ -118,6 +118,7 @@ class ResearchProjectRead(BaseModel):
     inclusion_criteria: list[str]
     synthesis_json: dict[str, Any] | None
     synthesis_generation: int
+    brief_outdated: bool | None = None
     created_at: datetime
     updated_at: datetime
     candidates: list[ResearchCandidateRead] = Field(default_factory=list)

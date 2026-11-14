@@ -129,6 +129,8 @@ def reconcile_comparison(db: Session, ident: str) -> None:
 def serialize_comparison(db: Session, row: Comparison, *, include_result=True) -> dict:
     sources = {p["paper_id"]:p.get("analysis_generation") for p in (row.evidence_json or {}).get("papers",[])}
     blockers=[]
+    result_job = next((j for j in row.jobs if j.requested_generation == row.result_generation and j.status in {JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_WARNINGS}), None)
+    result_goal = (row.evidence_json or {}).get("goal") or ((result_job.payload or {}).get("goal") if result_job else None)
     for link in row.papers:
         if link.paper.status == "failed":
             job=db.query(Job).filter_by(paper_id=link.paper_id,job_type="analysis").order_by(Job.created_at.desc()).first()
@@ -137,6 +139,8 @@ def serialize_comparison(db: Session, row: Comparison, *, include_result=True) -
     return {"id":row.id,"name":row.name,"goal":row.goal,"status":row.status,"version":row.version,
             "generation":row.generation,"result_generation":row.result_generation,
             "result_json":row.result_json if include_result else None,
+            "result_goal":result_goal,
+            "result_created_at":(row.evidence_json or {}).get("generated_at") or (result_job.finished_at if result_job else None),
             "outdated":bool(row.result_json and (row.result_generation != row.generation or any(sources.get(l.paper_id) != l.paper.analysis_generation for l in row.papers))),
             "error_message":row.error_message,"created_at":row.created_at,"updated_at":row.updated_at,
             "papers":[LibraryPaperRead.model_validate(l.paper).model_dump() for l in row.papers],
@@ -195,7 +199,7 @@ def process_comparison_job(job_id: str, *, heartbeat: Callable[[], bool] | None=
                 row.error_message="Replacement generation was unavailable; previous result retained."
             else:
                 row.result_json=output.model_dump()
-                row.evidence_json={"papers":snapshot}
+                row.evidence_json={"papers":snapshot,"goal":job.payload["goal"],"generated_at":now().isoformat()+"Z"}
                 row.result_generation=generation
             row.status="done" if output.generation_mode=="ai" and not warnings else "degraded"
             job.status=JobStatus.COMPLETED if row.status=="done" else JobStatus.COMPLETED_WITH_WARNINGS
