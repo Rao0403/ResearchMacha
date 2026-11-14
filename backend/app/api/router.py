@@ -7,6 +7,7 @@ from app.api.routes.papers import router as papers_router
 from app.api.routes.research import router as research_router
 from app.api.routes.reader import router as reader_router
 from app.api.routes.comparisons import router as comparisons_router
+from app.api.routes.exports import router as exports_router
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(research_router, tags=["research"])
@@ -14,3 +15,4 @@ api_router.include_router(papers_router, tags=["papers"])
 api_router.include_router(reader_router, tags=["reader"])
 api_router.include_router(comparisons_router, tags=["comparisons"])
 api_router.include_router(jobs_router, tags=["jobs"])
+api_router.include_router(exports_router, tags=["exports"])
